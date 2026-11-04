@@ -1,33 +1,8 @@
-import { useEffect, useState } from "react";
-import Compass from "./compass/Compass";
+import { useState } from "react";
+import Site from "./site/Site";
 
 // Change this before sharing with your testers
 const TEST_PASSWORD = "akema-beta-2026";
-
-// Env variables take priority; the hardcoded values are used if they're missing
-const AKEMA_CONFIG = {
-  key:
-    import.meta.env.VITE_AKEMA_KEY ||
-    "pk_434a91e8a5f2403c62aa06bfe5ae7e9b5e0265a67fde234e3f5d2f09b241529e",
-  appKey:
-    import.meta.env.VITE_AKEMA_APP_KEY || "2a60d798f32afecda0c066cb06ea9b61",
-  api: import.meta.env.VITE_AKEMA_API || "https://akema.ai/api",
-  ws: import.meta.env.VITE_AKEMA_WS || "wss://akema.ai",
-};
-
-function loadAkemaWidget() {
-  if (document.getElementById("akema-widget")) return;
-
-  const script = document.createElement("script");
-  script.id = "akema-widget";
-  script.src = "https://akema.ai/embed/widget.js";
-  script.async = true;
-  script.dataset.chatbotKey = AKEMA_CONFIG.key;
-  script.dataset.chatbotApi = AKEMA_CONFIG.api;
-  script.dataset.chatbotWs = AKEMA_CONFIG.ws;
-  script.dataset.chatbotAppKey = AKEMA_CONFIG.appKey;
-  document.body.appendChild(script);
-}
 
 function App() {
   const [unlocked, setUnlocked] = useState(
@@ -35,11 +10,6 @@ function App() {
   );
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-
-  // Only load the chat widget after the password is accepted
-  useEffect(() => {
-    if (unlocked) loadAkemaWidget();
-  }, [unlocked]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -82,11 +52,8 @@ function App() {
     );
   }
 
-  
-
-  // After unlocking: the Compass journey is the main experience,
-  // and the Akema chat bubble sits on top as the chat layer.
-  return <Compass />;
+  // The demo website: Ask the Lion everywhere, the journey at #/journey
+  return <Site />;
 }
 
 const styles = {

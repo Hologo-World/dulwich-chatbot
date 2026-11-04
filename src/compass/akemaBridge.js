@@ -2,9 +2,12 @@
 // Bridge between Compass and the Akema chat widget.
 //
 // The widget exposes (undocumented, confirm with Akema):
-//   window.Chatbot.open() / close() / send(text) / state
-//   window.ChatbotWidgetConfig.onEvent(event) – called for every
-//   request, realtime event and frontend-tool call the widget makes.
+//   window.Chatbot.open() / close() / send(text) / state / api()
+//   window.ChatbotWidgetConfig.onEvent(event)
+//
+// askInline() sends a question through the widget's conversation
+// WITHOUT opening the bubble, waits for the Lion's reply and returns
+// the text, so the page can show the answer wherever it wants.
 // ─────────────────────────────────────────────────────────────
 
 const AKEMA_CONFIG = {
@@ -14,14 +17,26 @@ const AKEMA_CONFIG = {
     appKey: import.meta.env.VITE_AKEMA_APP_KEY || '2a60d798f32afecda0c066cb06ea9b61',
     api: import.meta.env.VITE_AKEMA_API || 'https://akema.ai/api',
     ws: import.meta.env.VITE_AKEMA_WS || 'wss://akema.ai',
+    // Bubble sits bottom-left so it never covers the Ask the Lion panel (right)
+    position: 'left',
 }
 
 const listeners = new Set()
-const sentByCompass = new Set() // questions Compass sent, so we don't re-parse them
+const rawListeners = new Set() // raw widget events, used by askInline
+const sentByCompass = new Set() // messages Compass sent, so we don't re-parse them
 
-// Subscribe to chat activity. Returns an unsubscribe function.
-// Events: { type: 'message', from: 'visitor' | 'ai' | ..., text }
-//         { type: 'tool', tool, url, method, body }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const textOf = (parts) =>
+    (parts || [])
+        .filter((p) => p.type === 'text' && p.text)
+        .map((p) => p.text)
+        .join(' ')
+        .trim()
+
+// ── Events from the widget ──────────────────────────────────
+// { type: 'message', from: 'visitor' | 'ai' | ..., text }
+// { type: 'tool', tool, url, method, body }
 export function onAkemaEvent(fn) {
     listeners.add(fn)
     return () => listeners.delete(fn)
@@ -37,18 +52,16 @@ function emit(event) {
     })
 }
 
-const textOf = (parts) =>
-    (parts || [])
-        .filter((p) => p.type === 'text' && p.text)
-        .map((p) => p.text)
-        .join(' ')
-        .trim()
-
-// Translate the widget's raw log events into Compass events
 function handleWidgetEvent(e) {
     if (!e || !e.kind) return
+    rawListeners.forEach((fn) => {
+        try {
+            fn(e)
+        } catch {
+            /* ignore */
+        }
+    })
 
-    // The parent sent a message (from the chat box or via Chatbot.send)
     if (e.kind === 'req' && e.message === 'POST /messages' && e.detail?.item) {
         const text = textOf(e.detail.item.parts)
         if (!text) return
@@ -60,17 +73,15 @@ function handleWidgetEvent(e) {
         return
     }
 
-    // The AI (or a human agent) replied
     if (e.kind === 'evt' && e.message.startsWith('timelineItemCreated') && e.detail?.item) {
         const item = e.detail.item
         const from = item.actor?.type || 'unknown'
-        if (from === 'visitor') return // already handled above
+        if (from === 'visitor') return
         const text = textOf(item.parts)
         if (text) emit({ type: 'message', from, text })
         return
     }
 
-    // The Akema agent called a frontend tool
     if (e.kind === 'tool' && e.detail?.url) {
         emit({
             type: 'tool',
@@ -82,7 +93,7 @@ function handleWidgetEvent(e) {
     }
 }
 
-// Adds the Akema chat bubble to the page (only once)
+// ── Loading the widget ──────────────────────────────────────
 export function loadAkemaWidget() {
     if (document.getElementById('akema-widget')) return
 
@@ -100,6 +111,7 @@ export function loadAkemaWidget() {
     script.dataset.chatbotApi = AKEMA_CONFIG.api
     script.dataset.chatbotWs = AKEMA_CONFIG.ws
     script.dataset.chatbotAppKey = AKEMA_CONFIG.appKey
+    script.dataset.chatbotPosition = AKEMA_CONFIG.position
     document.body.appendChild(script)
 }
 
@@ -122,38 +134,125 @@ function waitForChatbot(mountTimeout = 10000, bootTimeout = 6000) {
     })
 }
 
-// Opens the chat and sends a question from Compass
-export async function askAkema(question) {
+// ── Inline answers (the bubble stays closed) ────────────────
+async function readTimeline(bot, conversationId) {
+    const res = await bot.api('GET', `/conversations/${conversationId}/timeline?limit=50`)
+    return res?.items || []
+}
+
+// The Lion only replies reliably while the widget's live connection is up,
+// which normally happens when the chat panel is opened. Opening and closing
+// in the same moment starts that connection without ever showing the panel.
+async function ensureLive(bot, timeout = 6000) {
+    if (bot.state.subscribed) return true
+    if (!bot.state.panelOpen) {
+        bot.open()
+        bot.close()
+    }
+    const start = Date.now()
+    while (Date.now() - start < timeout) {
+        if (bot.state.subscribed) return true
+        await sleep(150)
+    }
+    console.warn('[compass] the chat connection did not come up; answers may be slow')
+    return false
+}
+
+const isReply = (i) => i && i.type === 'message' && i.actor && i.actor.type !== 'visitor'
+
+async function askInlineNow(question, timeout = 60000) {
     loadAkemaWidget()
     const bot = await waitForChatbot()
+    if (!bot) throw new Error('The Lion isn’t available right now. Please try again in a moment.')
+    if (bot.state?.bootError) throw new Error('The Lion couldn’t connect. Please try again later.')
 
-    if (!bot) {
-        console.warn('[compass] chat widget never mounted. Check widget.js in the Network tab.')
+    await ensureLive(bot)
+
+    // A closed conversation can't take new messages, so start a fresh one
+    const current = bot.state.conversation
+    if (current && (current.status === 'resolved' || current.acceptsMessages === false)) {
+        bot.state.conversation = null
+    }
+
+    // Remember everything already in the conversation, so only new replies count
+    const before = new Set()
+    if (bot.state.conversation) {
         try {
-            await navigator.clipboard.writeText(question)
-            return 'copied'
+            ; (await readTimeline(bot, bot.state.conversation.id)).forEach((i) => before.add(i.id))
         } catch {
-            return 'failed'
+            /* fall back to what the widget already holds */
         }
     }
+    bot.state.items.forEach((_, id) => before.add(id))
 
-    bot.open()
-    if (bot.state?.bootError) {
-        console.warn('[compass] chat widget failed to boot:', bot.state.bootError)
-        return 'failed'
+    // Listen for replies arriving live (fast path)
+    const live = []
+    const onRaw = (e) => {
+        if (e.kind !== 'evt' || !String(e.message).startsWith('timelineItemCreated')) return
+        const d = e.detail
+        if (!d || !isReply(d.item) || before.has(d.item.id)) return
+        const text = textOf(d.item.parts)
+        if (text && !live.some((r) => r.id === d.item.id)) {
+            live.push({ id: d.item.id, conversationId: d.conversationId, text })
+        }
     }
+    rawListeners.add(onRaw)
 
     try {
-        sentByCompass.add(question.trim())
-        await bot.send(question)
-        return 'sent'
-    } catch (err) {
-        console.error('[compass] could not send the question:', err)
-        return 'opened'
+        const text = question.trim()
+        sentByCompass.add(text)
+        await bot.send(text)
+
+        const sent = [...bot.state.items.values()].find(
+            (i) => !before.has(i.id) && i.actor?.type === 'visitor',
+        )
+        if (!bot.state.conversation || (sent && bot.state.failed.has(sent.id))) {
+            throw new Error('Your question couldn’t be sent. Please try again.')
+        }
+        const conversationId = bot.state.conversation.id
+
+        // Wait for the reply: live events first, the timeline as a backup
+        const deadline = Date.now() + timeout
+        let polled = []
+        let firstSeen = null
+        let tick = 0
+        while (Date.now() < deadline) {
+            await sleep(400)
+            tick += 1
+            if (tick % 4 === 0) {
+                try {
+                    polled = (await readTimeline(bot, conversationId))
+                        .filter((i) => !before.has(i.id) && isReply(i))
+                        .map((i) => textOf(i.parts))
+                        .filter(Boolean)
+                } catch {
+                    /* try again on the next round */
+                }
+            }
+            const fromLive = live.filter((r) => r.conversationId === conversationId).map((r) => r.text)
+            const found = fromLive.length >= polled.length ? fromLive : polled
+            if (found.length) {
+                // Give a follow-up message a moment to arrive, then answer
+                if (!firstSeen) firstSeen = Date.now()
+                else if (Date.now() - firstSeen > 1200) return found.join('\n\n')
+            }
+        }
+        throw new Error('The Lion is taking longer than usual. Try again, or continue in the chat.')
+    } finally {
+        rawListeners.delete(onRaw)
     }
 }
 
-// Loads the widget (if needed) and opens the chat panel
+// One question at a time, so each reply is matched to the right question
+let inlineQueue = Promise.resolve()
+export function askInline(question) {
+    const run = () => askInlineNow(question)
+    const result = inlineQueue.then(run, run)
+    inlineQueue = result.catch(() => { })
+    return result
+}
+
+// ── Opening the full chat ───────────────────────────────────
 export async function openAkemaChat() {
     loadAkemaWidget()
     const bot = await waitForChatbot()
@@ -161,25 +260,8 @@ export async function openAkemaChat() {
     return !!bot
 }
 
-// Sends a message into the chat as the parent.
-// open: false sends it without opening the panel (the bubble shows an unread badge).
-export async function sendToAkema(text, { open = true } = {}) {
-    loadAkemaWidget()
-    const bot = await waitForChatbot()
-    if (!bot || bot.state?.bootError) return false
-    if (open) bot.open()
-    try {
-        sentByCompass.add(text.trim())
-        await bot.send(text)
-        return true
-    } catch (err) {
-        console.error('[compass] could not send the context:', err)
-        return false
-    }
-}
-
-// Calls fn(url) when the parent clicks a link inside the chat.
-// If fn returns true, Compass handles the click instead of opening a new tab.
+// ── Links clicked inside the chat bubble ────────────────────
+// If fn(url) returns true, the page handles the click instead of a new tab.
 export function onAkemaLinkClick(fn) {
     let root = null
     let stopped = false
@@ -192,7 +274,6 @@ export function onAkemaLinkClick(fn) {
         }
     }
 
-    // The widget may load later (at the journey reveal), so keep checking
     const attach = () => {
         if (stopped) return
         const r = window.Chatbot?.root

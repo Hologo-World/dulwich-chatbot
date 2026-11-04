@@ -1,0 +1,343 @@
+/* ─────────────────────────────────────────────────────────────
+   Journey redesign: photo cards on a connected timeline.
+   Loaded after Compass.css and overrides its track and card styles.
+   ───────────────────────────────────────────────────────────── */
+
+/* ── Track ─────────────────────────────────── */
+.track-wrap {
+  position: relative;
+}
+.compass .track {
+  grid-auto-columns: minmax(280px, 320px);
+  gap: 1.25rem;
+  margin: 0.75rem 0 1.75rem;
+  padding: 0.25rem 1.25rem 1.25rem;
+  scroll-padding: 0 1.25rem;
+  scrollbar-width: thin;
+}
+@media (min-width: 1200px) {
+  .compass .track {
+    padding-left: max(1.25rem, calc((100vw - 1200px) / 2 + 1.25rem));
+    padding-right: max(1.25rem, calc((100vw - 1200px) / 2 + 1.25rem));
+  }
+}
+
+.track-nav {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(21, 35, 59, 0.12);
+}
+.track-nav:hover {
+  border-color: var(--ink);
+}
+.track-nav--prev {
+  left: 0.5rem;
+}
+.track-nav--next {
+  right: 0.5rem;
+}
+@media (max-width: 700px) {
+  .track-nav {
+    display: none; /* swipe instead */
+  }
+}
+
+/* ── Stage: number on a connecting rail, then the title ── */
+.compass .stage {
+  display: flex;
+  flex-direction: column;
+}
+.stage__rail {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+.compass .stage__step {
+  width: 30px;
+  height: 30px;
+  background: var(--ink);
+  font-size: 0.85rem;
+}
+.stage__line {
+  flex: 1;
+  height: 2px;
+  margin-right: -1.25rem; /* reach the next stage across the gap */
+  background: var(--line);
+}
+.stage:last-child .stage__line {
+  visibility: hidden;
+}
+.compass .stage__head {
+  padding: 0;
+  border: none;
+  margin-bottom: 0.75rem;
+  min-height: 1.6rem;
+}
+.compass .stage__title {
+  font-size: 1rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.compass .stage--updated .stage__step {
+  background: var(--jade);
+}
+.compass .stage--updated .stage__line {
+  background: var(--jade);
+}
+.compass .stage--updated .jcard {
+  box-shadow:
+    0 0 0 2px var(--jade),
+    0 10px 30px rgba(21, 35, 59, 0.1);
+}
+
+/* ── Photo card ────────────────────────────── */
+.jcard {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(21, 35, 59, 0.05);
+  transition:
+    box-shadow 0.25s,
+    transform 0.25s;
+}
+.jcard:hover {
+  box-shadow: 0 12px 32px rgba(21, 35, 59, 0.14);
+}
+.jcard__media {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: linear-gradient(135deg, #e7efec, #eef0f4);
+  overflow: hidden;
+}
+.jcard__media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.4s;
+}
+.jcard:hover .jcard__media img {
+  transform: scale(1.04);
+}
+.jcard__media-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 2rem;
+  opacity: 0.5;
+}
+.jcard__badge {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+}
+.jcard__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 1rem 1.1rem 1.1rem;
+}
+.jcard__title {
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+}
+.jcard__summary {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+.jcard__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.1rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+.jcard__tags li {
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: #eaf3f0;
+  color: var(--jade);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.jcard__note {
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 1px dashed #d8b4b0;
+  border-radius: 8px;
+  background: #fbf4f3;
+  color: #7c2a24;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.jcard__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+.jcard__cta {
+  color: var(--red);
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.jcard__source {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+/* Invite and gap cards keep the same shape */
+.jcard--invite,
+.jcard--gap {
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 360px;
+  padding: 1.5rem;
+  border-style: dashed;
+  box-shadow: none;
+}
+.jcard--invite {
+  background: transparent;
+}
+.jcard--gap {
+  background: #fbf4f3;
+}
+.jcard--invite p,
+.jcard--gap p {
+  margin: 0;
+  color: var(--muted);
+}
+.jcard__plus {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed var(--muted);
+  border-radius: 50%;
+  font-size: 1.4rem;
+  color: var(--muted);
+}
+.jcard__gap-title {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #7c2a24 !important;
+}
+
+/* ── Drawer: photo first ───────────────────── */
+.compass .drawer {
+  padding: 0 0 2rem;
+}
+.compass .drawer > :not(.drawer__hero):not(.drawer__close) {
+  margin-left: 1.5rem;
+  margin-right: 1.5rem;
+}
+.drawer__hero {
+  aspect-ratio: 16 / 10;
+  margin-bottom: 1.25rem;
+  background: #eef0f4;
+  overflow: hidden;
+}
+.drawer__hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.drawer__hero .media {
+  margin: 0;
+  height: 100%;
+  border-radius: 0;
+}
+.compass .drawer__close {
+  z-index: 2;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  font-size: 1.5rem;
+}
+.compass .drawer__stage {
+  margin-top: 0;
+}
+.compass .drawer > .drawer__stage:first-of-type {
+  margin-top: 1.75rem;
+}
+.drawer__hero + .drawer__title {
+  margin-top: 0;
+}
+.drawer__lead {
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  line-height: 1.5;
+  margin: 0 0 0.75rem;
+}
+.compass .drawer__detail {
+  margin: 0 0 0.75rem;
+  line-height: 1.6;
+}
+.drawer__why {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 1rem 0;
+}
+.drawer__why > span {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.compass .drawer .jcard__note {
+  margin: 0.5rem 0 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jcard,
+  .jcard__media img {
+    transition: none;
+  }
+  .jcard:hover .jcard__media img {
+    transform: none;
+  }
+}
+
+/* Leave the context chips visible above the editor when scrolled to */
+.editor-anchor {
+  scroll-margin-top: 5rem;
+}

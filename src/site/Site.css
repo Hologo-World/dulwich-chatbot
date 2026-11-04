@@ -1,0 +1,963 @@
+@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Literata:opsz,wght@7..72,500;7..72,600&display=swap");
+
+/* ── Neutralise Vite's starter index.css ──────
+   (centred #root column, faded heading colours) */
+body {
+  margin: 0;
+  background: #f6f7f9;
+}
+#root {
+  display: block;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  text-align: left;
+}
+.site h1,
+.site h2,
+.site h3 {
+  color: inherit;
+}
+
+/* ── Tokens ───────────────────────────────── */
+.site {
+  --ink: #15233b;
+  --ink-2: #22314d;
+  --paper: #f6f7f9;
+  --surface: #ffffff;
+  --red: #9e2b25;
+  --red-soft: #f8ecea;
+  --jade: #2e6a5c;
+  --jade-soft: #eaf3f0;
+  --muted: #5c6678;
+  --line: #e1e5eb;
+  --serif: "Literata", Georgia, serif;
+  --sans: "Figtree", system-ui, sans-serif;
+
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.site *,
+.site *::before,
+.site *::after {
+  box-sizing: border-box;
+}
+
+.site button,
+.site input {
+  font: inherit;
+}
+
+.site :focus-visible {
+  outline: 2px solid var(--jade);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.site__main {
+  flex: 1;
+}
+
+/* ── Header ───────────────────────────────── */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 2.5rem;
+  padding: 0.7rem 2rem;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--ink);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.brand__mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 8px;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.15rem;
+}
+.brand__text {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.brand__text small {
+  font-family: var(--sans);
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--red);
+}
+
+.site-nav {
+  display: flex;
+  gap: 1.75rem;
+}
+.site-nav a {
+  position: relative;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 0.96rem;
+  padding: 0.4rem 0;
+  white-space: nowrap;
+}
+.site-nav a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -0.2rem;
+  height: 2px;
+  background: transparent;
+}
+.site-nav a:hover::after {
+  background: var(--line);
+}
+.site-nav a.is-active {
+  font-weight: 600;
+}
+.site-nav a.is-active::after {
+  background: var(--red);
+}
+
+/* The Ask the Lion pill, like an "Ask Gemini" button */
+.ask-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.1rem 0.55rem 0.9rem;
+  border: 1.5px solid var(--red);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--red);
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ask-pill:hover {
+  background: var(--red-soft);
+}
+
+@media (max-width: 960px) {
+  .site-header {
+    flex-wrap: wrap;
+    gap: 0.6rem 1rem;
+    padding: 0.7rem 1.25rem 0;
+  }
+  .site-nav {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    gap: 1.4rem;
+    padding-bottom: 0.6rem;
+  }
+}
+
+/* ── Home: hero ───────────────────────────── */
+.hero {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 4.5rem 2rem 4rem;
+}
+.hero__inner {
+  max-width: 1160px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  gap: 4rem;
+  align-items: start;
+}
+.hero h1 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: clamp(2.2rem, 4.4vw, 3.4rem);
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  margin: 0 0 1.1rem;
+}
+.hero__lede {
+  color: var(--muted);
+  font-size: 1.15rem;
+  max-width: 52ch;
+  margin: 0 0 2rem;
+}
+
+.ask-box {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.4rem 0.4rem 0.4rem 1.1rem;
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(21, 35, 59, 0.07);
+}
+.ask-box:focus-within {
+  border-color: var(--ink);
+}
+.ask-box__icon {
+  font-size: 1.35rem;
+}
+.ask-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 1.05rem;
+  padding: 0.6rem 0;
+}
+.ask-box__go {
+  padding: 0.65rem 1.4rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--red);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ask-box__go:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.hero__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.suggest {
+  padding: 0.4rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.suggest:hover {
+  border-color: var(--jade);
+  background: var(--jade-soft);
+}
+
+/* The journey preview: the one bold element on the page */
+.journey-teaser {
+  background: var(--ink);
+  color: #fff;
+  border-radius: 20px;
+  padding: 2rem;
+}
+.journey-teaser h2 {
+  font-family: var(--serif);
+  font-size: 1.5rem;
+  margin: 0 0 0.5rem;
+}
+.journey-teaser p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.75);
+}
+.journey-teaser__stages {
+  list-style: none;
+  margin: 1.5rem 0;
+  padding: 0;
+}
+.journey-teaser__stages li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.5rem 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+}
+.journey-teaser__stages li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: calc(50% + 14px);
+  height: calc(100% - 28px);
+  width: 1.5px;
+  background: rgba(255, 255, 255, 0.25);
+}
+.journey-teaser__num {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.journey-teaser__cta {
+  display: block;
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  background: var(--red);
+  color: #fff;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+}
+.journey-teaser__cta:hover {
+  background: #8a241f;
+}
+
+@media (max-width: 900px) {
+  .hero {
+    padding: 3rem 1.25rem;
+  }
+  .hero__inner {
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+  }
+}
+
+/* ── Home: areas ──────────────────────────── */
+.areas {
+  max-width: 1160px;
+  margin: 3.5rem auto 4rem;
+  padding: 0 2rem;
+}
+.areas__title {
+  font-family: var(--serif);
+  font-size: 1.7rem;
+  margin: 0 0 1.25rem;
+}
+.areas__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1rem;
+}
+.area-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.area-card:hover {
+  border-color: var(--ink);
+}
+.area-card h3 {
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  margin: 0;
+}
+.area-card p {
+  color: var(--muted);
+  margin: 0;
+}
+.area-card__count {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  color: var(--jade);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* ── Section pages ────────────────────────── */
+.page-band {
+  background: var(--ink);
+  color: #fff;
+  padding: 3rem 2rem 5rem;
+}
+.page-band__inner {
+  max-width: 1160px;
+  margin: 0 auto;
+}
+.page-band__trail {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+.page-band__trail a,
+.page-band__inner > a {
+  color: #fff;
+}
+.page-band h1 {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: clamp(2.2rem, 4vw, 3rem);
+  line-height: 1.1;
+  margin: 0 0 0.6rem;
+}
+.page-band__intro {
+  max-width: 60ch;
+  margin: 0;
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.section-grid {
+  max-width: 1160px;
+  margin: -3rem auto 4rem;
+  padding: 0 2rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+}
+.section-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(21, 35, 59, 0.04);
+  scroll-margin-top: 110px;
+  transition: box-shadow 0.3s;
+}
+.section-card--focus {
+  box-shadow: 0 0 0 2px var(--jade);
+}
+.section-card__title {
+  font-family: var(--serif);
+  font-size: 1.3rem;
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 0;
+}
+
+/* A question you can tap, with the Lion beside it */
+.prompt {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.prompt:hover {
+  border-color: var(--jade);
+  background: var(--jade-soft);
+}
+.prompt:disabled {
+  cursor: progress;
+  opacity: 0.75;
+}
+.prompt__avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1.5px solid var(--red);
+  border-radius: 50%;
+  font-size: 1rem;
+}
+.prompt__text {
+  flex: 1;
+  font-size: 0.98rem;
+}
+.prompt__go {
+  color: var(--red);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.section-card__source {
+  font-size: 0.88rem;
+  color: var(--jade);
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .page-band {
+    padding: 2.25rem 1.25rem 4.5rem;
+  }
+  .section-grid,
+  .areas {
+    padding: 0 1.25rem;
+  }
+}
+
+/* ── The Lion's inline answer ─────────────── */
+.lion-answer {
+  padding: 0.9rem 1rem;
+  background: var(--jade-soft);
+  border-left: 3px solid var(--jade);
+  border-radius: 0 12px 12px 0;
+  text-align: left;
+}
+.hero .lion-answer,
+.drawer .lion-answer,
+.lion-dock__text .lion-answer {
+  margin-top: 1.25rem;
+}
+.lion-answer__head {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--jade);
+}
+.lion-answer__pending i {
+  display: block;
+  height: 10px;
+  margin: 0.5rem 0;
+  border-radius: 5px;
+  background: #cfe2db;
+}
+.lion-answer__pending i:nth-child(2) {
+  width: 92%;
+}
+.lion-answer__pending i:nth-child(3) {
+  width: 68%;
+}
+.lion-answer__pending i:nth-child(4) {
+  width: 80%;
+}
+.lion-answer__error {
+  margin: 0;
+  color: var(--red);
+}
+.md p {
+  margin: 0 0 0.6rem;
+}
+.md ul {
+  margin: 0 0 0.6rem;
+  padding-left: 1.2rem;
+}
+.md li {
+  margin-bottom: 0.25rem;
+}
+.md a {
+  color: var(--jade);
+  font-weight: 600;
+}
+
+/* Journey page: the Lion's reply sits beside the docked Lion */
+.site .lion-dock {
+  align-items: flex-start;
+}
+.lion-dock__text {
+  flex: 1;
+  min-width: 0;
+  max-width: 760px;
+}
+
+/* ── The Ask the Lion side panel ──────────── */
+.lion-sheet {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 900;
+  width: min(440px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface, #fff);
+  color: var(--ink, #15233b);
+  border-left: 1px solid var(--line, #e1e5eb);
+  box-shadow: -16px 0 40px rgba(21, 35, 59, 0.14);
+  font-family: var(--sans, system-ui, sans-serif);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform 0.25s ease-out,
+    visibility 0s linear 0.25s;
+}
+.lion-sheet--open {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.25s ease-out;
+}
+.lion-sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 1.1rem 1.25rem;
+  background: var(--ink);
+  color: #fff;
+}
+.lion-sheet__icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  border: 2px solid var(--red);
+  border-radius: 50%;
+  font-size: 1.3rem;
+}
+.lion-sheet__head h2 {
+  font-family: var(--serif);
+  font-size: 1.2rem;
+  margin: 0;
+  color: #fff;
+}
+.lion-sheet__head p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+.lion-sheet__close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: #fff;
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.lion-sheet__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.25rem;
+  background: var(--paper);
+}
+.lion-sheet__empty p {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+}
+.lion-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 1.4rem;
+}
+.lion-turn__q {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 0.6rem 0.9rem;
+  background: var(--ink);
+  color: #fff;
+  border-radius: 16px 16px 4px 16px;
+}
+.lion-turn .lion-answer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--jade);
+}
+.lion-sheet__form {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.lion-sheet__form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.7rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink);
+}
+.lion-sheet__form input:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+.lion-sheet__form .btn--small {
+  border-radius: 999px;
+}
+.lion-sheet__chat {
+  align-self: flex-start;
+  margin: 0 1.25rem 1rem;
+}
+
+/* ── Footer ───────────────────────────────── */
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.75rem 2rem;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.site-footer p {
+  margin: 0;
+}
+.site-footer a {
+  color: var(--jade);
+  font-weight: 600;
+}
+
+/* ── Motion ───────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .lion-answer__pending i {
+    animation: lion-pulse 1.3s ease-in-out infinite;
+  }
+  .lion-answer__pending i:nth-child(3) {
+    animation-delay: 0.15s;
+  }
+  .lion-answer__pending i:nth-child(4) {
+    animation-delay: 0.3s;
+  }
+}
+@keyframes lion-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lion-sheet,
+  .lion-sheet--open,
+  .section-card {
+    transition: none;
+  }
+}
+
+/* ── Topic cards: the Lion button ─────────── */
+.section-grid {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.section-card {
+  gap: 0.85rem;
+}
+.section-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.lion-btn {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1.5px solid var(--red);
+  border-radius: 50%;
+  background: var(--surface);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.lion-btn:hover {
+  background: var(--red-soft);
+}
+.lion-btn:disabled {
+  cursor: progress;
+}
+
+/* ── The journey, full screen over the site ── */
+.journey-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(24px);
+  transition:
+    opacity 0.25s,
+    transform 0.25s,
+    visibility 0s linear 0.25s;
+}
+.journey-overlay--open {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+}
+.journey-overlay:focus {
+  outline: none;
+}
+.journey-overlay__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.7rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.journey-overlay__mark {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--red);
+  border-radius: 50%;
+  font-size: 1.1rem;
+}
+.journey-overlay__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: 1.15rem;
+}
+.journey-overlay__close {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  font-size: 1.8rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.journey-overlay__close:hover {
+  background: var(--paper);
+}
+.journey-overlay__body {
+  flex: 1;
+  overflow-y: auto;
+}
+.journey-overlay .compass {
+  min-height: 100%;
+}
+
+@media (max-width: 600px) {
+  .journey-overlay__bar {
+    padding: 0.6rem 1rem;
+  }
+  .journey-overlay__bar .ask-pill {
+    padding: 0.45rem 0.8rem;
+    font-size: 0.88rem;
+  }
+}
+
+/* Buttons that used to be links */
+.journey-teaser__cta {
+  width: 100%;
+  border: none;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.site-footer__journey {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--jade);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lion-btn {
+    transition:
+      transform 0.15s,
+      background 0.15s;
+  }
+  .lion-btn:hover {
+    transform: scale(1.06);
+  }
+  .lion-btn--busy {
+    animation: lion-pulse 1.2s ease-in-out infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .journey-overlay,
+  .journey-overlay--open {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* The Ask the Lion panel lives outside .site, so it needs its own tokens */
+.lion-sheet {
+  --ink: #15233b;
+  --paper: #f6f7f9;
+  --surface: #ffffff;
+  --red: #9e2b25;
+  --red-soft: #f8ecea;
+  --jade: #2e6a5c;
+  --jade-soft: #eaf3f0;
+  --muted: #5c6678;
+  --line: #e1e5eb;
+  --serif: "Literata", Georgia, serif;
+  --sans: "Figtree", system-ui, sans-serif;
+  line-height: 1.5;
+}
+.lion-sheet *,
+.lion-sheet *::before,
+.lion-sheet *::after {
+  box-sizing: border-box;
+}
+.lion-sheet button,
+.lion-sheet input {
+  font: inherit;
+}
+
+/* A clear, round close button on the navy header */
+.lion-sheet__close {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  color: #fff;
+}
+.lion-sheet__close:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.lion-sheet__close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}

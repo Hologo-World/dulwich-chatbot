@@ -7,14 +7,12 @@ import {
   VISIT_URL,
   YEARS,
 } from "./journeyData";
-import {
-  askAkema,
-  onAkemaEvent,
-  onAkemaLinkClick,
-  sendToAkema,
-} from "./akemaBridge";
+import { onAkemaEvent } from "./akemaBridge";
+import { LionAnswerCard, useLion, useLionAnswer } from "../lion/Lion";
 import { logGap, readGaps } from "./gaps";
+import { clearJourney, loadJourney, saveJourney } from "./storage";
 import "./Compass.css";
+import "./Journey.css";
 
 // ── Context helpers ──────────────────────────────────────────
 const GROUPS = ["interests", "languages", "priorities"];
@@ -28,6 +26,7 @@ const findOption = (id) => ALL_OPTIONS.find((o) => o.id === id);
 const yearLabel = (y) => YEARS.find((x) => x.value === y)?.label;
 
 const EMPTY = { year: null, interests: [], languages: [], priorities: [] };
+const NOT_ANSWERED = { interests: false, languages: false, priorities: false };
 
 function contextTags(ctx) {
   const tags = new Set();
@@ -43,11 +42,22 @@ function selectedLabels(ctx) {
   ).filter(Boolean);
 }
 
-// Labels of what the parent shared that connect to this item
-function matchedLabels(item, ctx) {
+// What the parent shared that connects to this item.
+// A "specific" interest (e.g. Volleyball) only counts if the card covers it.
+function sharedOptions(item, ctx) {
   return GROUPS.flatMap((g) => ctx[g])
     .map(findOption)
-    .filter((o) => o && o.tags.some((t) => item.tags.includes(t)))
+    .filter((o) => o && o.tags.some((t) => item.tags.includes(t)));
+}
+function matchedLabels(item, ctx) {
+  return sharedOptions(item, ctx)
+    .filter((o) => !o.specific || item.covers?.includes(o.id))
+    .map((o) => o.label);
+}
+// Specific interests this card touches on but doesn't verify
+function uncoveredLabels(item, ctx) {
+  return sharedOptions(item, ctx)
+    .filter((o) => o.specific && !item.covers?.includes(o.id))
     .map((o) => o.label);
 }
 
@@ -118,18 +128,33 @@ function findMentions(text) {
   return ids;
 }
 
+// Phrases that mean "take this out". The captured word is what gets removed.
+const REMOVE_PATTERNS = [
+  /\bthan\s+(?:the\s+|a\s+)?([a-z]+)/g, // "music matters (more) than swimming"
+  /\binstead\s+of\s+(?:the\s+)?([a-z]+)/g, // "music instead of art"
+  /\b(?:replace|swap)\s+(?:the\s+)?([a-z]+)/g, // "replace art with music"
+  /\b(?:remove|drop|without|skip|forget|less)\s+(?:the\s+|any\s+)?([a-z]+)/g, // "drop art"
+  /\b(?:not|no\s+longer)\s+(?:into\s+|interested\s+in\s+)?([a-z]+)/g, // "not into art"
+  /\b([a-z]+)\s+(?:is\s+)?(?:less\s+important|doesn['’]?t\s+matter|does\s+not\s+matter)/g, // "art doesn't matter"
+];
+
 function parseInput(text) {
   const lower = text.toLowerCase();
+
   let year = null;
   const ym = lower.match(/year\s*(\d{1,2})/);
   if (ym && Number(ym[1]) <= 13) year = Number(ym[1]);
   else if (/reception/.test(lower)) year = 0;
 
+  // Everything named in a "take this out" phrase is removed...
   const removeIds = new Set();
-  const rm = lower.match(
-    /(?:more than|instead of|rather than|remove|drop|not into|no longer|without)\s+([a-z]+)/,
-  );
-  if (rm) findMentions(rm[1]).forEach((id) => removeIds.add(id));
+  REMOVE_PATTERNS.forEach((re) => {
+    for (const m of lower.matchAll(re)) {
+      findMentions(m[1]).forEach((id) => removeIds.add(id));
+    }
+  });
+
+  // ...and never added back, even though it's mentioned in the sentence
   const addIds = [...findMentions(lower)].filter((id) => !removeIds.has(id));
   return { year, addIds, removeIds: [...removeIds] };
 }
@@ -170,7 +195,7 @@ function teaserFor(id) {
     : `${o.label}, lovely.`;
 }
 
-// Turns the parent's selections into a natural message for the chat
+// Turns the parent's selections into a natural message for the Lion
 function describeContext(ctx) {
   const labels = (g) =>
     ctx[g].map((id) => findOption(id)?.label).filter(Boolean);
@@ -192,6 +217,24 @@ function describeContext(ctx) {
     parts.push(`We'd love school to help them grow in ${list(priorities)}.`);
   return parts.join(" ");
 }
+
+// Saved selections may refer to options that no longer exist: drop those
+function sanitizeCtx(c) {
+  if (!c) return EMPTY;
+  const valid = (g) =>
+    (Array.isArray(c[g]) ? c[g] : []).filter(
+      (id) => findOption(id)?.group === g,
+    );
+  return {
+    year: YEARS.some((y) => y.value === c.year) ? c.year : null,
+    interests: valid("interests"),
+    languages: valid("languages"),
+    priorities: valid("priorities"),
+  };
+}
+
+const WELCOME_BACK =
+  "Welcome back. Here’s the journey you were exploring. Anything you’d like to change?";
 
 // ── Adaptive discovery: information goals, not a script ─────
 function nextGoal(ctx, answered) {
@@ -215,34 +258,76 @@ const WELCOME =
 
 // ── Component ───────────────────────────────────────────────
 export default function Compass() {
-  const [ctx, setCtx] = useState(EMPTY);
-  const [answered, setAnswered] = useState({
-    interests: false,
-    languages: false,
-    priorities: false,
-  });
-  const [phase, setPhase] = useState("discovery");
-  const [lionNote, setLionNote] = useState(WELCOME);
-  const [exploreMode, setExploreMode] = useState(false);
+  // Pick up where the family left off (saved in this browser)
+  const [saved] = useState(loadJourney);
+  const [ctx, setCtx] = useState(() => sanitizeCtx(saved?.ctx));
+  const [answered, setAnswered] = useState(() => ({
+    ...NOT_ANSWERED,
+    ...(saved?.answered || {}),
+  }));
+  const [phase, setPhase] = useState(() =>
+    saved?.phase === "journey" ? "journey" : "discovery",
+  );
+  const [lionNote, setLionNote] = useState(() =>
+    saved?.phase === "journey" ? WELCOME_BACK : WELCOME,
+  );
+  const [exploreMode, setExploreMode] = useState(!!saved?.exploreMode);
   const [input, setInput] = useState("");
   const [openItem, setOpenItem] = useState(null); // journey stage entry
   const [editing, setEditing] = useState(false);
   const [updated, setUpdated] = useState(new Set());
   const [showGaps, setShowGaps] = useState(false);
-  const [toast, setToast] = useState("");
   const prevJourney = useRef(null);
-  const sentContext = useRef(null);
-  const loggedGaps = useRef(new Set());
+  const trackRef = useRef(null);
+  const editorRef = useRef(null);
+  const [editRequest, setEditRequest] = useState(0);
+  const openEditor = () => {
+    setEditing(true);
+    setEditRequest((n) => n + 1);
+  };
+  const loggedGaps = useRef(new Set(saved?.loggedGaps || []));
+  const events = useRef(saved?.events || []);
+  const firstCtx = useRef(true);
+
+  // A short history of what the family did, kept with the saved journey
+  const record = (type, detail) => {
+    events.current = [
+      ...events.current,
+      { at: new Date().toISOString(), type, detail },
+    ].slice(-50);
+  };
+
+  // The Lion: answers appear on the page, the chat bubble stays closed
+  const { askInSheet, setPageContext } = useLion();
+  const [intro, runIntro, resetIntro] = useLionAnswer(saved?.intro);
 
   const journey = useMemo(() => buildJourney(ctx), [ctx]);
   const goal = nextGoal(ctx, answered);
   const canReveal = ctx.year != null && ctx.interests.length > 0;
 
-  // NEW: keep the latest journey available to the chat link handler
+  // Keep the latest journey available to the link handler
   const journeyRef = useRef(journey);
   useEffect(() => {
     journeyRef.current = journey;
   }, [journey]);
+
+  // Questions asked from the Ask the Lion panel carry the family context
+  useEffect(() => {
+    setPageContext(phase === "journey" ? describeContext(ctx) : null);
+  }, [phase, ctx, setPageContext]);
+  useEffect(() => () => setPageContext(null), [setPageContext]);
+
+  // Scroll up to the editor whenever it's asked for
+  useEffect(() => {
+    if (!editRequest) return;
+    const el = editorRef.current;
+    if (!el) return;
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    el.querySelector("select, button")?.focus({ preventScroll: true });
+  }, [editRequest]);
 
   // Highlight stages that changed after a remix
   useEffect(() => {
@@ -264,18 +349,56 @@ export default function Compass() {
   // Record knowledge gaps once per topic per session
   useEffect(() => {
     if (phase !== "journey") return;
+    const context = { year: yearLabel(ctx.year), shared: selectedLabels(ctx) };
+    const topics = [];
     journey.forEach((s) => {
-      if (s.kind === "gap" && !loggedGaps.current.has(s.topic)) {
-        loggedGaps.current.add(s.topic);
-        logGap(s.topic, {
-          year: yearLabel(ctx.year),
-          shared: selectedLabels(ctx),
-        });
-      }
+      if (s.kind === "gap") topics.push(s.topic);
+      if (s.kind === "item")
+        uncoveredLabels(s.item, ctx).forEach((l) =>
+          topics.push(`${l} at DCB (${s.stage.title})`),
+        );
+    });
+    topics.forEach((t) => {
+      if (loggedGaps.current.has(t)) return;
+      loggedGaps.current.add(t);
+      logGap(t, context);
     });
   }, [journey, phase, ctx]);
 
-  // Keep the journey in sync with what happens in the Akema chat
+  // Record each change to the selections
+  useEffect(() => {
+    if (firstCtx.current) {
+      firstCtx.current = false;
+      return;
+    }
+    record("selections", {
+      year: yearLabel(ctx.year) ?? null,
+      shared: selectedLabels(ctx),
+    });
+  }, [ctx]);
+
+  // Save everything to this browser whenever it changes
+  useEffect(() => {
+    saveJourney({
+      ctx,
+      answered,
+      phase,
+      exploreMode,
+      intro: intro.status === "done" ? intro : null,
+      journey:
+        phase === "journey"
+          ? journey.map((s) => ({
+              stage: s.stage.id,
+              kind: s.kind,
+              item: s.item?.id ?? null,
+            }))
+          : null,
+      loggedGaps: [...loggedGaps.current],
+      events: events.current,
+    });
+  }, [ctx, answered, phase, exploreMode, intro, journey]);
+
+  // Messages typed in the full chat bubble can still remix the journey
   useEffect(() => {
     return onAkemaEvent((ev) => {
       let p = null;
@@ -304,31 +427,36 @@ export default function Compass() {
     });
   }, []);
 
-  // NEW: links in the chat open the matching journey card instead of a new tab
+  // DCB links in answers or the chat: open the matching journey card.
+  // (Site.jsx sends a cancelable "compass:link" event; preventDefault = handled.)
   useEffect(() => {
-    const norm = (u) => u.replace(/[#?].*$/, "").replace(/\/+$/, "");
-    return onAkemaLinkClick((url) => {
-      const target = norm(url);
-
-      // Prefer the card already in the parent's journey
+    const norm = (u) =>
+      String(u || "")
+        .replace(/[#?].*$/, "")
+        .replace(/\/+$/, "")
+        .toLowerCase();
+    const onLink = (e) => {
+      const target = norm(e.detail);
       const inJourney = journeyRef.current.find(
         (s) => s.kind === "item" && norm(s.item.source.url) === target,
       );
       if (inJourney) {
         setOpenItem(inJourney);
-        return true;
+        e.preventDefault();
+        return;
       }
-
-      // Otherwise any card that uses this page
-      const item = EVIDENCE.find((e) => norm(e.source.url) === target);
-      if (!item) return false; // no matching card: open the DCB page as usual
-      setOpenItem({
-        kind: "item",
-        item,
-        stage: STAGES.find((s) => s.id === item.stage),
-      });
-      return true;
-    });
+      const item = EVIDENCE.find((x) => norm(x.source.url) === target);
+      if (item) {
+        setOpenItem({
+          kind: "item",
+          item,
+          stage: STAGES.find((s) => s.id === item.stage),
+        });
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("compass:link", onLink);
+    return () => window.removeEventListener("compass:link", onLink);
   }, []);
 
   // Deep links: #card-<id> opens a card, #gaps opens the admin digest
@@ -352,38 +480,36 @@ export default function Compass() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  const clearHash = () =>
-    window.history.replaceState(
-      null,
-      "",
-      window.location.pathname + window.location.search,
-    );
+  // Stay on the journey page when a drawer or the digest closes
+  const clearHash = () => window.history.replaceState(null, "", "#/journey");
 
-  const notify = (msg) => {
-    setToast(msg);
-    setTimeout(() => setToast(""), 3200);
+  // Clear the saved journey and begin again
+  const startOver = () => {
+    clearJourney();
+    events.current = [];
+    loggedGaps.current = new Set();
+    prevJourney.current = null;
+    setCtx(EMPTY);
+    setAnswered(NOT_ANSWERED);
+    setPhase("discovery");
+    setExploreMode(false);
+    setEditing(false);
+    setOpenItem(null);
+    resetIntro();
+    setLionNote(WELCOME);
   };
 
-  const ask = async (question) => {
-    const key = JSON.stringify(ctx);
-    const message =
-      sentContext.current === key
-        ? question
-        : `${describeContext(ctx)} ${question}`;
-
-    const result = await askAkema(message);
-    if (result === "sent") {
-      sentContext.current = key;
-      notify("Sent to the chat.");
-    } else if (result === "opened")
-      notify("Chat opened. Type your question there.");
-    else if (result === "copied")
-      notify("Question copied. Paste it into the chat bubble.");
-    else
-      notify(
-        "The chat isn’t available right now. Check the console for details.",
-      );
+  // Arrow buttons move the journey one card at a time
+  const scrollTrack = (dir) => {
+    const el = trackRef.current;
+    if (!el) return;
+    const cardWidth = el.querySelector(".stage")?.offsetWidth || 320;
+    el.scrollBy({ left: dir * (cardWidth + 20), behavior: "smooth" });
   };
+
+  // Ask the Lion in the side panel, with the family context
+  const ask = (question) =>
+    askInSheet(question, { context: describeContext(ctx) });
 
   const toggle = (group, id) => {
     const adding = !ctx[group].includes(id);
@@ -409,22 +535,18 @@ export default function Compass() {
   const markAnswered = (group) => setAnswered((a) => ({ ...a, [group]: true }));
 
   const reveal = () => {
+    record("revealed", {
+      year: yearLabel(ctx.year) ?? null,
+      shared: selectedLabels(ctx),
+    });
     setPhase("journey");
     setEditing(false);
-
-    // Tell the chat what the parent shared. Desktop opens the panel beside
-    // the journey; phones only show an unread badge so the journey stays visible.
-    const isDesktop = window.matchMedia("(min-width: 700px)").matches;
-    const key = JSON.stringify(ctx);
-    sendToAkema(
-      `Hi! ${describeContext(ctx)} What could their journey at DCB include?`,
-      { open: isDesktop },
-    ).then((ok) => {
-      if (ok) sentContext.current = key;
+    // The Lion's first verified insight appears right beside the journey
+    runIntro("What could their journey at DCB include?", {
+      context: describeContext(ctx),
     });
-
     setLionNote(
-      "Based on the interests you shared, here are some opportunities you could explore at DCB. How does this feel so far? Anything you’d like me to change?",
+      "Based on the interests you shared, here are some opportunities you could explore at DCB. Anything you’d like me to change?",
     );
   };
 
@@ -434,7 +556,7 @@ export default function Compass() {
     if (!text) return;
     setInput("");
 
-    // Questions go to the chat, even if they mention an interest
+    // Questions go to the Lion, even if they mention an interest
     const isQuestion =
       /\?\s*$/.test(text) ||
       /^(what|how|when|where|who|why|which|can|could|does|do|is|are|will|would|tell me|show me)\b/i.test(
@@ -442,7 +564,7 @@ export default function Compass() {
       );
     if (isQuestion) {
       setLionNote(
-        "Let me check what DCB has verified on that. I’ve passed your question to the chat.",
+        "Good question. My answer is in the panel beside your journey.",
       );
       ask(text);
       return;
@@ -480,7 +602,7 @@ export default function Compass() {
 
     // Not a question and nothing recognised
     if (phase === "journey") {
-      setLionNote("Let me pass that to the chat.");
+      setLionNote("Let me look into that for you.");
       ask(text);
       return;
     }
@@ -499,9 +621,7 @@ export default function Compass() {
           <div className="lion lion--large" aria-hidden="true">
             🦁
           </div>
-          <h1 className="intro__title" style={{color:"black"}}>
-            What could school at DCB look like for your child?
-          </h1>
+          <h1 className="intro__title">Let’s build your child’s journey</h1>
           <p className="lion-say">{lionNote}</p>
 
           {(ctx.year != null || selectedLabels(ctx).length > 0) && (
@@ -604,7 +724,10 @@ export default function Compass() {
               <span className="lion lion--small" aria-hidden="true">
                 🦁
               </span>
-              <p className="lion-say lion-say--small">{lionNote}</p>
+              <div className="lion-dock__text">
+                <p className="lion-say lion-say--small">{lionNote}</p>
+                <LionAnswerCard state={intro} />
+              </div>
             </div>
             <ContextBar
               ctx={ctx}
@@ -613,40 +736,63 @@ export default function Compass() {
               editing={editing}
             />
             {editing && (
-              <ContextEditor ctx={ctx} onToggle={toggle} onYear={chooseYear} />
+              <div ref={editorRef} className="editor-anchor">
+                <ContextEditor
+                  ctx={ctx}
+                  onToggle={toggle}
+                  onYear={chooseYear}
+                />
+              </div>
             )}
           </header>
 
-          <ol className="track">
-            {journey.map((s, i) => (
-              <li
-                key={s.stage.id}
-                id={`stage-${s.stage.id}`}
-                className={`stage${updated.has(s.stage.id) ? " stage--updated" : ""}`}
-              >
-                <div className="stage__head">
-                  <span className="stage__step">{i + 1}</span>
-                  <h2 className="stage__title">{s.stage.title}</h2>
-                  {updated.has(s.stage.id) && (
-                    <span className="stage__flag">Updated</span>
-                  )}
-                </div>
-                <StageCard
-                  entry={s}
-                  ctx={ctx}
-                  onOpen={() => setOpenItem(s)}
-                  onInvite={() => setEditing(true)}
-                />
-              </li>
-            ))}
-          </ol>
-
-          <div className="quick" role="group" aria-label="Quick actions">
+          <div className="track-wrap">
             <button
               type="button"
-              className="chip"
-              onClick={() => setEditing(true)}
+              className="track-nav track-nav--prev"
+              aria-label="Previous stages"
+              onClick={() => scrollTrack(-1)}
             >
+              ‹
+            </button>
+            <button
+              type="button"
+              className="track-nav track-nav--next"
+              aria-label="Next stages"
+              onClick={() => scrollTrack(1)}
+            >
+              ›
+            </button>
+            <ol className="track" ref={trackRef}>
+              {journey.map((s, i) => (
+                <li
+                  key={s.stage.id}
+                  id={`stage-${s.stage.id}`}
+                  className={`stage${updated.has(s.stage.id) ? " stage--updated" : ""}`}
+                >
+                  <div className="stage__rail" aria-hidden="true">
+                    <span className="stage__step">{i + 1}</span>
+                    <span className="stage__line" />
+                  </div>
+                  <div className="stage__head">
+                    <h2 className="stage__title">{s.stage.title}</h2>
+                    {updated.has(s.stage.id) && (
+                      <span className="stage__flag">Updated</span>
+                    )}
+                  </div>
+                  <StageCard
+                    entry={s}
+                    ctx={ctx}
+                    onOpen={() => setOpenItem(s)}
+                    onInvite={() => setEditing(true)}
+                  />
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          <div className="quick" role="group" aria-label="Quick actions">
+            <button type="button" className="chip" onClick={openEditor}>
               Change an interest
             </button>
             <button
@@ -676,13 +822,16 @@ export default function Compass() {
             >
               Explore sport
             </button>
+            <button type="button" className="chip" onClick={startOver}>
+              Start over
+            </button>
           </div>
 
           <InputBar
             value={input}
             onChange={setInput}
             onSubmit={handleSubmit}
-            placeholder="Change anything, e.g. “music matters more than art”"
+            placeholder="Ask a question, or change anything, e.g. “music matters more than art”"
           />
 
           <footer className="next">
@@ -696,7 +845,6 @@ export default function Compass() {
               >
                 Speak to Admissions
               </a>
-              {/* NEW: goes to the Visit Us page */}
               <a
                 className="btn btn--quiet"
                 href={VISIT_URL}
@@ -712,13 +860,13 @@ export default function Compass() {
 
       {openItem && (
         <Drawer
+          key={openItem.item?.id || openItem.topic || openItem.stage.id}
           entry={openItem}
           ctx={ctx}
           onClose={() => {
             setOpenItem(null);
             clearHash();
           }}
-          onAsk={ask}
         />
       )}
       {showGaps && (
@@ -728,11 +876,6 @@ export default function Compass() {
             clearHash();
           }}
         />
-      )}
-      {toast && (
-        <div className="toast" role="status">
-          {toast}
-        </div>
       )}
     </div>
   );
@@ -844,50 +987,76 @@ function ContextEditor({ ctx, onToggle, onYear }) {
   );
 }
 
-function StageCard({ entry, ctx, onOpen, onInvite }) {
+function StageCard({ entry, ctx, onOpen, onInvite = { openEditor } }) {
   if (entry.kind === "invite") {
     return (
-      <button type="button" className="card card--invite" onClick={onInvite}>
+      <button type="button" className="jcard jcard--invite" onClick={onInvite}>
+        <span className="jcard__plus" aria-hidden="true">
+          +
+        </span>
         <p>
           Tell me what you’d love school to help them grow in, and I’ll add it
           here.
         </p>
-        <span className="card__action">Add a priority</span>
+        <span className="jcard__cta">Add a priority</span>
       </button>
     );
   }
   if (entry.kind === "gap") {
     return (
-      <button type="button" className="card card--gap" onClick={onOpen}>
-        <p>I don’t have verified DCB information for this part yet.</p>
-        <span className="card__action">See options</span>
+      <button type="button" className="jcard jcard--gap" onClick={onOpen}>
+        <p className="jcard__gap-title">Not verified yet</p>
+        <p>
+          I don’t have verified DCB information for this part of the journey
+          yet.
+        </p>
+        <span className="jcard__cta">See options</span>
       </button>
     );
   }
   const { item } = entry;
   const links = matchedLabels(item, ctx);
+  const missing = uncoveredLabels(item, ctx);
   return (
-    <button type="button" className="card" onClick={onOpen}>
-      <div className="card__media">
+    <button type="button" className="jcard" onClick={onOpen}>
+      <div className="jcard__media">
         {item.media?.type === "image" ? (
-          <img src={item.media.url} alt={item.media.alt || ""} />
+          <img src={item.media.url} alt={item.media.alt || ""} loading="lazy" />
         ) : (
-          <span aria-hidden="true">{item.media ? "▶" : ""}</span>
+          <span className="jcard__media-empty" aria-hidden="true">
+            🦁
+          </span>
         )}
+        {!item.verified && <span className="badge jcard__badge">Draft</span>}
       </div>
-      {!item.verified && (
-        <span className="badge">Draft, needs verified content</span>
-      )}
-      <h3 className="card__title">{item.title}</h3>
-      {links.length > 0 && (
-        <p className="card__why">Connected to {links.join(", ")}</p>
-      )}
-      <span className="card__action">Explore</span>
+      <div className="jcard__body">
+        <h3 className="jcard__title">{item.title}</h3>
+        <p className="jcard__summary">{item.summary}</p>
+        {links.length > 0 && (
+          <ul className="jcard__tags" aria-label="Connected to what you shared">
+            {links.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        )}
+        {missing.length > 0 && (
+          <p className="jcard__note">
+            {missing.join(", ")}: not in DCB’s verified information yet
+          </p>
+        )}
+        <span className="jcard__foot">
+          <span className="jcard__cta">Explore</span>
+          <span className="jcard__source">{item.source.label}</span>
+        </span>
+      </div>
     </button>
   );
 }
 
-function Drawer({ entry, ctx, onClose, onAsk }) {
+function Drawer({ entry, ctx, onClose }) {
+  // The Lion answers right inside the drawer
+  const [answer, runAnswer] = useLionAnswer();
+
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
@@ -914,7 +1083,7 @@ function Drawer({ entry, ctx, onClose, onAsk }) {
         >
           ×
         </button>
-        <p className="drawer__stage">{entry.stage.title}</p>
+        {isGap && <p className="drawer__stage">{entry.stage.title}</p>}
 
         {isGap ? (
           <>
@@ -944,21 +1113,46 @@ function Drawer({ entry, ctx, onClose, onAsk }) {
           </>
         ) : (
           <>
+            <div className="drawer__hero">
+              {item.media?.type === "image" ? (
+                <img src={item.media.url} alt={item.media.alt || ""} />
+              ) : (
+                <Media media={item.media} />
+              )}
+            </div>
+            <p className="drawer__stage">{entry.stage.title}</p>
             <h2 className="drawer__title">{item.title}</h2>
             {!item.verified && (
               <span className="badge">Draft, needs verified content</span>
             )}
-            <Media media={item.media} />
-            <p className="drawer__detail">{item.detail}</p>
+            <p className="drawer__lead">{item.summary}</p>
+            {String(item.detail || "")
+              .split("\n\n")
+              .map((para, i) => (
+                <p key={i} className="drawer__detail">
+                  {para}
+                </p>
+              ))}
             {matchedLabels(item, ctx).length > 0 && (
-              <p className="drawer__why">
-                Why this is here: you mentioned{" "}
-                {matchedLabels(item, ctx).join(", ")}.
+              <div className="drawer__why">
+                <span>Why this is here</span>
+                <ul className="jcard__tags">
+                  {matchedLabels(item, ctx).map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {uncoveredLabels(item, ctx).length > 0 && (
+              <p className="jcard__note">
+                {uncoveredLabels(item, ctx).join(", ")} isn’t in DCB’s verified
+                information yet. I’ve noted it so the College can add it. You
+                can ask the Lion, or contact the team.
               </p>
             )}
             {item.voice && (
               <blockquote className="voice">
-                <p>{item.voice.quote}</p>
+                <p>“{item.voice.quote}”</p>
                 <cite>{item.voice.who}</cite>
               </blockquote>
             )}
@@ -976,11 +1170,14 @@ function Drawer({ entry, ctx, onClose, onAsk }) {
               <button
                 type="button"
                 className="btn btn--small"
+                disabled={answer.status === "pending"}
                 onClick={() =>
-                  onAsk(`Tell me more about ${item.title} at DCB.`)
+                  runAnswer(`Tell me more about ${item.title} at DCB.`, {
+                    context: describeContext(ctx),
+                  })
                 }
               >
-                Ask about this
+                Ask the Lion about this
               </button>
               <a
                 className="btn btn--quiet"
@@ -991,6 +1188,7 @@ function Drawer({ entry, ctx, onClose, onAsk }) {
                 Open on DCB website
               </a>
             </div>
+            <LionAnswerCard state={answer} />
             <details className="source">
               <summary>Source</summary>
               <p>
