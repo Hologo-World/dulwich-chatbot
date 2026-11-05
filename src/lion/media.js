@@ -106,3 +106,45 @@ export function mediaFor({ question = "", answer = "" }) {
 
     return { images: images.slice(0, 4), videos: videos.slice(0, 2), tour };
 }
+
+// When Compass is showing media under an answer, drop the agent's
+// "I can't show images" remarks (it doesn't know Compass can). For
+// "I can't send images, but you can explore X", keep "You can explore X".
+const CANT_SHOW =
+    /\b(?:can(?:no|['’])?t|cannot|am not able to|unable to|don['’]t have the ability to)\b[^.!?\n]*\b(?:images?|pictures?|photos?|photographs?|videos?|visuals?)\b/i;
+
+export function cleanAnswer({ question = "", answer = "" }) {
+    const { images, videos, tour } = mediaFor({ question, answer });
+    if (!images.length && !videos.length && !tour) return answer;
+
+    // Protect links and web addresses (their dots aren't sentence ends)
+    const saved = [];
+    const protectedText = String(answer).replace(
+        /\[[^\]]*\]\([^)]*\)|https?:\/\/\S+/g,
+        (m) => `\u0000${saved.push(m) - 1}\u0000`,
+    );
+
+    const fixSentence = (sentence) => {
+        if (!CANT_SHOW.test(sentence)) return sentence;
+        const but = sentence.match(/,\s*but\s+(.*)$/i);
+        if (!but) return ""; // drop the whole remark
+        return but[1].charAt(0).toUpperCase() + but[1].slice(1);
+    };
+
+    // Paragraph by paragraph, so the agent's paragraph breaks are kept
+    const cleaned = protectedText
+        .split(/\n{2,}/)
+        .map((para) =>
+            para
+                .split(/(?<=[.!?])[ \t]+/)
+                .map(fixSentence)
+                .filter(Boolean)
+                .join(" ")
+                .trim(),
+        )
+        .filter(Boolean)
+        .join("\n\n")
+        .replace(/\u0000(\d+)\u0000/g, (_, i) => saved[Number(i)]);
+
+    return cleaned.length > 20 ? cleaned : answer;
+}

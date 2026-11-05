@@ -15,7 +15,7 @@ import {
   voiceAvailable,
 } from "../compass/akemaBridge";
 import { emptyFamily, loadFamily, saveFamily } from "../compass/storage";
-import { mediaFor } from "./media";
+import { cleanAnswer, mediaFor } from "./media";
 import "./LionChat.css";
 
 // ─────────────────────────────────────────────────────────────
@@ -226,7 +226,14 @@ export function LionProvider({ children, onLink, onOpen }) {
     forgetConversation(id);
   }, []);
 
-  const handleLink = useCallback((url) => !!onLinkRef.current?.(url), []);
+  // A link that takes the parent somewhere on the page (a journey card or a
+  // site section) also slides the chat away, so they can see where they landed.
+  // The Lion tab on the right brings the conversation back.
+  const handleLink = useCallback((url) => {
+    const handled = !!onLinkRef.current?.(url);
+    if (handled) setSheetOpen(false);
+    return handled;
+  }, []);
   const getPageContext = useCallback(() => pageContext.current, []);
   const openViewer = useCallback((item) => setViewer(item), []);
   const closeViewer = useCallback(() => setViewer(null), []);
@@ -340,7 +347,13 @@ export function LionAnswerCard({ state, inSheet = false }) {
 
       {state.status === "done" && (
         <>
-          <Markdown text={state.answer} onLink={handleLink} />
+          <Markdown
+            text={cleanAnswer({
+              question: state.question,
+              answer: state.answer,
+            })}
+            onLink={handleLink}
+          />
           <AnswerMedia question={state.question} answer={state.answer} />
           {!inSheet && (
             <button type="button" className="link" onClick={openSheet}>
@@ -656,7 +669,13 @@ function LionSheet() {
                         )}
                         {m.status === "done" && (
                           <>
-                            <Markdown text={m.answer} onLink={handleLink} />
+                            <Markdown
+                              text={cleanAnswer({
+                                question: m.question,
+                                answer: m.answer,
+                              })}
+                              onLink={handleLink}
+                            />
                             <AnswerMedia
                               question={m.question}
                               answer={m.answer}
@@ -751,6 +770,9 @@ function AnswerMedia({ question, answer }) {
 
   return (
     <div className="answer-media">
+      {images.length > 0 && (
+        <p className="answer-media__label-top">Photos from DCB</p>
+      )}
       {images.length > 0 && (
         <div className="answer-media__strip">
           {images.map((i) => (

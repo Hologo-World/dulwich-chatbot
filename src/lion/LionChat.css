@@ -806,3 +806,10 @@
     transform: none;
   }
 }
+
+.answer-media__label-top {
+  margin: 0.25rem 0 -0.15rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted, #5c6678);
+}
