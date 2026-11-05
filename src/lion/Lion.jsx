@@ -15,6 +15,7 @@ import {
   voiceAvailable,
 } from "../compass/akemaBridge";
 import { emptyFamily, loadFamily, saveFamily } from "../compass/storage";
+import { mediaFor } from "./media";
 import "./LionChat.css";
 
 // ─────────────────────────────────────────────────────────────
@@ -96,6 +97,7 @@ export function LionProvider({ children, onLink, onOpen }) {
   const [memory, setMemory] = useState([]); // e.g. ["Year 4, age 8", "Art"]
   const [familyList, setFamilyList] = useState([]); // [{ id, label }]
   const [requestedChild, setRequestedChild] = useState(null);
+  const [viewer, setViewer] = useState(null); // a photo, video or the tour, shown in Compass
 
   const onLinkRef = useRef(onLink);
   const onOpenRef = useRef(onOpen);
@@ -225,6 +227,9 @@ export function LionProvider({ children, onLink, onOpen }) {
   }, []);
 
   const handleLink = useCallback((url) => !!onLinkRef.current?.(url), []);
+  const getPageContext = useCallback(() => pageContext.current, []);
+  const openViewer = useCallback((item) => setViewer(item), []);
+  const closeViewer = useCallback(() => setViewer(null), []);
   const thread = threads[activeKey] || [];
 
   const value = useMemo(
@@ -247,6 +252,10 @@ export function LionProvider({ children, onLink, onOpen }) {
       clearRequest,
       forgetChild,
       addEntry,
+      getPageContext,
+      viewer,
+      openViewer,
+      closeViewer,
       openChat: openAkemaChat,
     }),
     [
@@ -268,6 +277,10 @@ export function LionProvider({ children, onLink, onOpen }) {
       clearRequest,
       forgetChild,
       addEntry,
+      getPageContext,
+      viewer,
+      openViewer,
+      closeViewer,
     ],
   );
 
@@ -275,6 +288,7 @@ export function LionProvider({ children, onLink, onOpen }) {
     <LionContext.Provider value={value}>
       {children}
       <LionSheet />
+      <MediaViewer />
     </LionContext.Provider>
   );
 }
@@ -327,6 +341,7 @@ export function LionAnswerCard({ state, inSheet = false }) {
       {state.status === "done" && (
         <>
           <Markdown text={state.answer} onLink={handleLink} />
+          <AnswerMedia question={state.question} answer={state.answer} />
           {!inSheet && (
             <button type="button" className="link" onClick={openSheet}>
               See the whole conversation
@@ -358,6 +373,7 @@ function LionSheet() {
     memory,
     familyList,
     selectChild,
+    getPageContext,
   } = useLion();
   const [question, setQuestion] = useState("");
   const endRef = useRef(null);
@@ -380,26 +396,57 @@ function LionSheet() {
 
   const startCall = async () => {
     const callKey = activeKey; // the child this call is about
+    const context = getPageContext();
     linesRef.current = [];
     setCall({ status: "connecting", lines: [], muted: false });
     try {
       callRef.current = await startVoiceCall({
         conversationKey: callKey,
+        context,
+        onContext: (result) => {
+          const note = {
+            id: "context-note",
+            role: "note",
+            text:
+              result === "shared"
+                ? `Shared ${contextLabel || "your child"}’s details with the Lion`
+                : `Couldn’t share ${contextLabel || "your child"}’s details with the Lion`,
+          };
+          linesRef.current = [
+            note,
+            ...linesRef.current.filter((l) => l.id !== note.id),
+          ];
+          setCall((c) => (c ? { ...c, lines: linesRef.current } : c));
+        },
         onStatus: (status) => setCall((c) => (c ? { ...c, status } : c)),
         onTranscript: (seg) => {
+          // What the parent says can shape the journey (e.g. "he loves to read")
+          if (seg.final && seg.role === "user") tellJourney(seg.text, callKey);
           const lines = linesRef.current.some((l) => l.id === seg.id)
             ? linesRef.current.map((l) => (l.id === seg.id ? seg : l))
             : [...linesRef.current, seg];
           linesRef.current = lines;
           setCall((c) => (c ? { ...c, lines } : c));
         },
-        onEnd: () => {
+        onEnd: (reason) => {
           // Keep the call in the conversation as a transcript
-          const lines = linesRef.current.filter((l) => l.text.trim());
+          const lines = linesRef.current.filter(
+            (l) => l.role !== "note" && l.text.trim(),
+          );
           if (lines.length)
             addEntry({ kind: "voice", source: "a voice call", lines }, callKey);
           callRef.current = null;
-          setCall(null);
+          if (reason && reason !== "ended") {
+            // The voice service closed the call, not the parent
+            setCall({
+              status: "error",
+              lines: [],
+              muted: false,
+              error: `The voice service ended the call (${reason}). You can try again, or keep typing.`,
+            });
+          } else {
+            setCall(null);
+          }
         },
       });
     } catch (err) {
@@ -445,7 +492,10 @@ function LionSheet() {
     inputRef.current?.focus({ preventScroll: true });
     const onKey = (e) => {
       // A card drawer opened from an answer closes first
-      if (e.key === "Escape" && !document.querySelector(".drawer-backdrop"))
+      if (
+        e.key === "Escape" &&
+        !document.querySelector(".drawer-backdrop, .lion-viewer")
+      )
         closeSheet();
     };
     window.addEventListener("keydown", onKey);
@@ -461,6 +511,7 @@ function LionSheet() {
     e?.preventDefault();
     const q = question.trim();
     if (!q) return;
+    tellJourney(q, activeKey); // statements like "she loves music" update the journey
     setQuestion("");
     if (inputRef.current) inputRef.current.style.height = "auto";
     askInSheet(q);
@@ -604,7 +655,13 @@ function LionSheet() {
                           </div>
                         )}
                         {m.status === "done" && (
-                          <Markdown text={m.answer} onLink={handleLink} />
+                          <>
+                            <Markdown text={m.answer} onLink={handleLink} />
+                            <AnswerMedia
+                              question={m.question}
+                              answer={m.answer}
+                            />
+                          </>
                         )}
                         {m.status === "error" && (
                           <p className="lion-answer__error">{m.answer}</p>
@@ -683,6 +740,173 @@ function LionSheet() {
   );
 }
 
+// ── Photos, videos and the campus tour, inside Compass ──────
+function AnswerMedia({ question, answer }) {
+  const { openViewer } = useLion();
+  const { images, videos, tour } = useMemo(
+    () => mediaFor({ question, answer }),
+    [question, answer],
+  );
+  if (!images.length && !videos.length && !tour) return null;
+
+  return (
+    <div className="answer-media">
+      {images.length > 0 && (
+        <div className="answer-media__strip">
+          {images.map((i) => (
+            <button
+              key={i.url}
+              type="button"
+              className="answer-media__img"
+              onClick={() => openViewer(i)}
+              aria-label={`View photo: ${i.title || i.alt}`}
+            >
+              <img src={i.url} alt={i.alt || ""} loading="lazy" />
+              {i.title && <span>{i.title}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {videos.map((v) => (
+        <button
+          key={v.url}
+          type="button"
+          className="answer-media__wide"
+          onClick={() => openViewer(v)}
+        >
+          <span className="answer-media__thumb">
+            {v.poster && <img src={v.poster} alt="" loading="lazy" />}
+            <span className="answer-media__play" aria-hidden="true">
+              ▶
+            </span>
+          </span>
+          <span className="answer-media__label">
+            <strong>{v.title}</strong>
+            <small>Watch here</small>
+          </span>
+        </button>
+      ))}
+
+      {tour && (
+        <button
+          type="button"
+          className="answer-media__wide"
+          onClick={() => openViewer(tour)}
+        >
+          <span className="answer-media__thumb">
+            <img src={tour.thumb} alt="" loading="lazy" />
+            <span className="answer-media__play" aria-hidden="true">
+              360°
+            </span>
+          </span>
+          <span className="answer-media__label">
+            <strong>Take the virtual campus tour</strong>
+            <small>Walk around DCB without leaving this page</small>
+          </span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function MediaViewer() {
+  const { viewer, closeViewer, handleLink } = useLion();
+
+  useEffect(() => {
+    if (!viewer) return;
+    const onKey = (e) => e.key === "Escape" && closeViewer();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewer, closeViewer]);
+
+  if (!viewer) return null;
+  const v = viewer;
+  const title = v.kind === "tour" ? v.title : v.title || v.alt || "DCB";
+
+  return (
+    <div
+      className="lion-viewer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={closeViewer}
+    >
+      <div
+        className={`lion-viewer__panel lion-viewer__panel--${v.kind}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header className="lion-viewer__bar">
+          <p>{title}</p>
+          <button
+            type="button"
+            className="lion-viewer__close"
+            aria-label="Close"
+            onClick={closeViewer}
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="lion-viewer__stage">
+          {v.kind === "image" && <img src={v.url} alt={v.alt || ""} />}
+          {v.kind === "video" &&
+            (v.type === "mp4" ? (
+              <video
+                src={v.url}
+                poster={v.poster}
+                controls
+                autoPlay
+                playsInline
+              />
+            ) : (
+              <iframe
+                src={v.url}
+                title={v.title}
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                allowFullScreen
+              />
+            ))}
+          {v.kind === "tour" && (
+            <iframe
+              src={v.url}
+              title="DCB virtual campus tour"
+              allow="fullscreen; accelerometer; gyroscope; xr-spatial-tracking"
+              allowFullScreen
+            />
+          )}
+        </div>
+
+        <footer className="lion-viewer__foot">
+          {v.kind === "tour" ? (
+            <>
+              <span>
+                If the tour doesn’t load here, it can open in a new tab.
+              </span>
+              <a href={v.url} target="_blank" rel="noreferrer">
+                Open the tour in a new tab
+              </a>
+            </>
+          ) : (
+            v.page && (
+              <button
+                type="button"
+                className="lion-viewer__more"
+                onClick={() => {
+                  closeViewer();
+                  handleLink(v.page);
+                }}
+              >
+                See this in the journey
+              </button>
+            )
+          )}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 // ── Voice pieces ────────────────────────────────────────────
 const VOICE_STATUS = {
   connecting: "Connecting to the Lion…",
@@ -712,6 +936,14 @@ function MicIcon() {
   );
 }
 
+// Lets the open child's journey pick up what the parent says or types
+// in the chat (Compass.jsx listens for this)
+function tellJourney(text, childId) {
+  window.dispatchEvent(
+    new CustomEvent("compass:said", { detail: { text, childId } }),
+  );
+}
+
 function VoiceTranscript({ lines, live = false }) {
   const { handleLink } = useLion();
   return (
@@ -722,7 +954,11 @@ function VoiceTranscript({ lines, live = false }) {
         {live ? "Voice call, live" : "Voice call"}
       </p>
       {lines.map((l) =>
-        l.role === "user" ? (
+        l.role === "note" ? (
+          <p key={l.id} className="lion-voice-log__note">
+            {l.text}
+          </p>
+        ) : l.role === "user" ? (
           <div key={l.id} className="lion-msg lion-msg--you">
             <p>{l.text}</p>
           </div>

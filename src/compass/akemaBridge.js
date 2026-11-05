@@ -328,7 +328,17 @@ export async function voiceAvailable() {
 //   onTranscript({ id, role: 'user' | 'assistant', text })  (text grows as it streams)
 //   onEnd()
 // Returns { setMuted(bool), end() }.
-export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversationKey } = {}) {
+// context: the child's details as a sentence, handed to the voice agent as
+// soon as the call connects, so it never has to ask for them again.
+// onContext('shared' | 'failed'): whether the agent received the details
+export async function startVoiceCall({
+    onStatus,
+    onTranscript,
+    onEnd,
+    onContext,
+    conversationKey,
+    context,
+} = {}) {
     loadAkemaWidget()
     const bot = await waitForChatbot()
     if (!bot || bot.state.bootError) throw new Error('The Lion isn’t available right now.')
@@ -351,13 +361,23 @@ export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversati
     const room = new lk.Room()
     const audio = new Set()
     let ended = false
-    const finish = () => {
+    // reason: 'ended' when the parent hangs up, otherwise LiveKit's reason name
+    const finish = (reason = 'ended') => {
         if (ended) return
         ended = true
         audio.forEach((el) => el.remove())
         audio.clear()
-        onEnd?.()
+        onEnd?.(reason)
     }
+
+    // Diagnostics: who joins and leaves the call, and why it ended
+    const who = (p) => `${p.identity}${p.isAgent ? ' (agent)' : ''}`
+    room.on(lk.RoomEvent.ParticipantConnected, (p) =>
+        console.info('[compass voice] joined:', who(p)),
+    )
+    room.on(lk.RoomEvent.ParticipantDisconnected, (p) =>
+        console.info('[compass voice] left:', who(p)),
+    )
 
     // The Lion's voice
     room.on(lk.RoomEvent.TrackSubscribed, (track) => {
@@ -373,7 +393,11 @@ export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversati
             audio.delete(el)
         })
     })
-    room.on(lk.RoomEvent.Disconnected, finish)
+    room.on(lk.RoomEvent.Disconnected, (code) => {
+        const name = (lk.DisconnectReason && lk.DisconnectReason[code]) || String(code)
+        console.info('[compass voice] call ended:', name, { conversationId })
+        finish(name === 'CLIENT_INITIATED' ? 'ended' : name)
+    })
 
     // listening / thinking / speaking
     room.on(lk.RoomEvent.ParticipantAttributesChanged, (changed, participant) => {
@@ -394,6 +418,7 @@ export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversati
             text += chunk
             onTranscript?.({ id, role, text })
         }
+        onTranscript?.({ id, role, text, final: true }) // the line is complete
     })
 
     try {
@@ -406,13 +431,86 @@ export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversati
     }
     onStatus?.('listening')
 
+    // Hand the agent the child's details. LiveKit voice agents accept typed
+    // input on the "lk.chat" topic as if the parent had said it. The agent
+    // joins a moment after us, and messages only reach people already in the
+    // call, so wait for it to join and finish its greeting first.
+    // Switch off for testing with: window.COMPASS_VOICE_CONTEXT = false
+    if (context && window.COMPASS_VOICE_CONTEXT !== false) {
+        shareContextWithAgent(lk, room, context).then(
+            (ok) => onContext?.(ok ? 'shared' : 'failed'),
+            () => onContext?.('failed'),
+        )
+    }
+
     return {
         setMuted: (muted) => room.localParticipant.setMicrophoneEnabled(!muted),
         end: () => {
+            finish('ended')
             room.disconnect()
-            finish()
         },
     }
+}
+
+// Finds the voice agent among the people in the call
+function findAgent(lk, room) {
+    return [...room.remoteParticipants.values()].find(
+        (p) =>
+            p.isAgent ||
+            (lk.ParticipantKind && p.kind === lk.ParticipantKind.AGENT) ||
+            /agent/i.test(p.identity || ''),
+    )
+}
+
+function waitFor(check, timeout) {
+    return new Promise((resolve) => {
+        const start = Date.now()
+        const tick = () => {
+            const value = check()
+            if (value) return resolve(value)
+            if (Date.now() - start > timeout) return resolve(null)
+            setTimeout(tick, 200)
+        }
+        tick()
+    })
+}
+
+async function shareContextWithAgent(lk, room, context) {
+    // 1. The agent has joined (up to 15 s)
+    const agent = await waitFor(() => findAgent(lk, room), 15000)
+    if (agent) console.info('[compass voice] agent found:', agent.identity)
+    if (!agent) {
+        console.warn('[compass] the voice agent never joined, so the details were not shared')
+        return false
+    }
+
+    // 2. It has finished speaking its greeting and is listening (up to 12 s)
+    const listening = await waitFor(
+        () => agent.attributes?.['lk.agent.state'] === 'listening',
+        12000,
+    )
+    console.info(
+        '[compass voice] agent state before sending details:',
+        agent.attributes?.['lk.agent.state'] ?? 'unknown',
+        listening ? '' : '(timed out waiting for "listening")',
+    )
+
+    // 3. Send the details to the agent itself
+    try {
+        await room.localParticipant.setAttributes?.({ 'compass.context': context })
+    } catch {
+        /* attributes are optional */
+    }
+    if (typeof room.localParticipant.sendText !== 'function') {
+        console.warn('[compass voice] this LiveKit client cannot send text')
+        return false
+    }
+    await room.localParticipant.sendText(
+        `Here is what I've already shared on the journey page: ${context} Please use this and don't ask me for it again.`,
+        { topic: 'lk.chat', destinationIdentities: [agent.identity] },
+    )
+    console.info('[compass voice] details sent to', agent.identity)
+    return true
 }
 
 // ── Opening the full chat ───────────────────────────────────

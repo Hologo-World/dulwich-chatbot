@@ -38,29 +38,80 @@ export const AGES = Array.from({ length: 16 }, (_, i) => i + 2) // 2 to 17
 export const ageToYear = (age) =>
     Number.isInteger(age) && age >= 2 && age <= 17 ? age - 4 : null
 
-// specific: true means a card only "covers" this interest if it lists it
-// in `covers`. Otherwise Compass says it isn't verified yet (and logs a gap)
-// instead of implying DCB offers it.
+// ── Interests: areas first, then the specifics inside each area ──
+// Only specifics that DCB's verified pages mention are offered as chips.
+// specific: true means a card only "covers" it if the card lists it in
+// `covers`; if no card does, Compass says it isn't verified yet (and logs a
+// gap) instead of implying DCB offers it.
+export const INTEREST_AREAS = [
+    {
+        id: 'cat-sport',
+        label: 'Sport',
+        tags: ['sport'],
+        prompt: 'Which sports especially?',
+        children: [
+            { id: 'swimming', label: 'Swimming', tags: ['swimming', 'sport'], specific: true },
+            { id: 'football', label: 'Football', tags: ['football', 'sport'], specific: true },
+            { id: 'tennis', label: 'Tennis', tags: ['tennis', 'sport'], specific: true },
+            { id: 'rugby', label: 'Rugby', tags: ['rugby', 'sport'], specific: true },
+            { id: 'badminton', label: 'Badminton', tags: ['badminton', 'sport'], specific: true },
+        ],
+    },
+    {
+        id: 'cat-arts',
+        label: 'Arts',
+        tags: ['creativity'],
+        prompt: 'Which kinds of art?',
+        children: [
+            { id: 'art', label: 'Visual art', tags: ['art', 'creativity'] },
+            { id: 'music', label: 'Music', tags: ['music', 'creativity'] },
+            { id: 'drama', label: 'Drama', tags: ['drama', 'creativity'] },
+            { id: 'film', label: 'Film and media', tags: ['film', 'art', 'creativity'] },
+        ],
+    },
+    {
+        id: 'cat-computing',
+        label: 'Computing and technology',
+        tags: ['stem', 'coding'],
+        prompt: 'Anything in particular?',
+        children: [
+            { id: 'coding', label: 'Coding', tags: ['coding', 'stem'] },
+            { id: 'robotics', label: 'Robotics', tags: ['robotics', 'coding', 'stem'], specific: true },
+            { id: 'game-design', label: 'Game design', tags: ['games', 'coding', 'stem'], specific: true },
+        ],
+    },
+    {
+        id: 'cat-academics',
+        label: 'Academics',
+        tags: ['academics', 'learning'],
+        prompt: 'Which subjects light them up?',
+        children: [
+            { id: 'maths', label: 'Maths', tags: ['maths', 'academics', 'learning'], specific: true },
+            { id: 'writing', label: 'Reading and writing', tags: ['writing', 'academics', 'learning'], specific: true },
+            { id: 'debate', label: 'Debate and public speaking', tags: ['debate', 'academics', 'confidence'], specific: true },
+        ],
+    },
+    { id: 'cat-languages', label: 'Languages', tags: ['languages', 'mandarin'], children: [] },
+    { id: 'outdoors', label: 'Outdoors and trips', tags: ['outdoors', 'beyond'], children: [] },
+    { id: 'cat-community', label: 'Community and service', tags: ['community', 'belonging'], children: [] },
+    { id: 'cat-pathways', label: 'Future pathways', tags: ['pathways'], children: [] },
+]
+
+// Recognised when typed, but not offered as a chip: nothing verified yet
+const UNOFFERED = [
+    { id: 'volleyball', label: 'Volleyball', tags: ['volleyball', 'sport'], specific: true, parent: 'cat-sport' },
+]
+
 export const OPTIONS = {
+    // Flat list of every interest (areas and specifics) for matching and storage
     interests: [
-        { id: 'volleyball', label: 'Volleyball', tags: ['volleyball', 'sport'], specific: true },
-        { id: 'football', label: 'Football', tags: ['football', 'sport'], specific: true },
-        { id: 'swimming', label: 'Swimming', tags: ['swimming', 'sport'], specific: true },
-        { id: 'art', label: 'Art', tags: ['art', 'creativity'] },
-        { id: 'music', label: 'Music', tags: ['music', 'creativity'] },
-        { id: 'drama', label: 'Drama', tags: ['drama', 'creativity'] },
-        { id: 'coding', label: 'Coding', tags: ['coding', 'stem'] },
-        { id: 'outdoors', label: 'Outdoors', tags: ['outdoors', 'beyond'] },
+        ...INTEREST_AREAS.flatMap((a) => [
+            { id: a.id, label: a.label, tags: a.tags, area: true },
+            ...a.children.map((c) => ({ ...c, parent: a.id })),
+        ]),
+        ...UNOFFERED,
     ],
-    explore: [
-        { id: 'x-learning', label: 'Learning', tags: ['learning', 'academics'] },
-        { id: 'x-sport', label: 'Sport', tags: ['sport'] },
-        { id: 'x-creativity', label: 'Creativity', tags: ['creativity'] },
-        { id: 'x-languages', label: 'Languages', tags: ['languages', 'mandarin'] },
-        { id: 'x-beyond', label: 'Beyond the classroom', tags: ['beyond', 'outdoors'] },
-        { id: 'x-community', label: 'Community and belonging', tags: ['community', 'belonging'] },
-        { id: 'x-future', label: 'Future pathways', tags: ['pathways'] },
-    ],
+    explore: [], // replaced by INTEREST_AREAS
     languages: [
         { id: 'english', label: 'English', tags: ['english', 'languages'] },
         { id: 'mandarin', label: 'Mandarin', tags: ['mandarin', 'languages'] },
@@ -110,8 +161,8 @@ export const EVIDENCE = [
     card({
         id: 'now-sport',
         stage: 'now',
-        tags: ['sport', 'volleyball', 'football', 'swimming'],
-        covers: ['football', 'swimming'],
+        tags: ['sport', 'volleyball', 'football', 'swimming', 'tennis', 'rugby', 'badminton'],
+        covers: ['football', 'swimming', 'tennis', 'rugby', 'badminton'],
         title: 'Sport and PE',
         summary: 'A progressive PE pathway, with sports from swimming to rugby.',
         detail:
@@ -167,8 +218,8 @@ export const EVIDENCE = [
     card({
         id: 'now-coding',
         stage: 'now',
-        tags: ['coding', 'stem'],
-        covers: ['coding'],
+        tags: ['coding', 'stem', 'robotics', 'games'],
+        covers: ['coding', 'robotics', 'game-design'],
         title: 'Coding and computing',
         summary: 'Robotics, game development and computing competitions.',
         detail:
@@ -215,8 +266,8 @@ export const EVIDENCE = [
     card({
         id: 'interests-cca',
         stage: 'interests',
-        tags: ['sport', 'art', 'music', 'drama', 'coding', 'creativity', 'learning', 'community'],
-        covers: ['coding'],
+        tags: ['sport', 'art', 'music', 'drama', 'coding', 'robotics', 'debate', 'creativity', 'learning', 'community'],
+        covers: ['coding', 'robotics', 'game-design', 'debate'],
         title: 'Over 150 co-curricular activities',
         summary: 'Many student-led, from debating and robotics to orchestra.',
         detail:
@@ -227,7 +278,7 @@ export const EVIDENCE = [
     card({
         id: 'interests-film',
         stage: 'interests',
-        tags: ['art', 'drama', 'creativity', 'coding'],
+        tags: ['film', 'art', 'drama', 'creativity', 'coding'],
         title: 'Film and creative media',
         summary: 'A film curriculum, a green screen studio and professional kit.',
         detail:
@@ -249,7 +300,8 @@ export const EVIDENCE = [
     card({
         id: 'interests-competitions',
         stage: 'interests',
-        tags: ['learning', 'academics', 'coding', 'stem', 'music', 'art'],
+        tags: ['learning', 'academics', 'maths', 'writing', 'debate', 'coding', 'stem', 'music', 'art'],
+        covers: ['maths', 'writing', 'debate'],
         title: 'Competitions and network events',
         summary: 'From Kangaroo Maths to Planet Hack and the WorldWise Festival of Music.',
         detail:
@@ -334,8 +386,7 @@ export const EVIDENCE = [
     card({
         id: 'ahead-sport',
         stage: 'ahead',
-        tags: ['sport', 'volleyball', 'football', 'swimming'],
-        covers: ['football', 'swimming'],
+        tags: ['sport', 'volleyball', 'football', 'swimming', 'tennis', 'rugby', 'badminton'],
         title: 'Competitive sport',
         summary: 'Sports teams and competitions through ACAMIS and FOBISIA.',
         detail:

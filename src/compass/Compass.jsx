@@ -9,6 +9,7 @@ import {
   AGES,
   AGE_CUTOFF,
   ageToYear,
+  INTEREST_AREAS,
 } from "./journeyData";
 import { onAkemaEvent } from "./akemaBridge";
 import { LionAnswerCard, useLion, useLionAnswer } from "../lion/Lion";
@@ -57,15 +58,19 @@ function sharedOptions(item, ctx) {
     .map(findOption)
     .filter((o) => o && o.tags.some((t) => item.tags.includes(t)));
 }
+// Specific interests that at least one verified card covers
+const COVERED = new Set(EVIDENCE.flatMap((e) => e.covers || []));
+
 function matchedLabels(item, ctx) {
   return sharedOptions(item, ctx)
     .filter((o) => !o.specific || item.covers?.includes(o.id))
     .map((o) => o.label);
 }
-// Specific interests this card touches on but doesn't verify
+// Specific interests this card touches on that no verified card covers
+// (e.g. Volleyball): shown as "not verified yet" and logged as a gap
 function uncoveredLabels(item, ctx) {
   return sharedOptions(item, ctx)
-    .filter((o) => o.specific && !item.covers?.includes(o.id))
+    .filter((o) => o.specific && !COVERED.has(o.id))
     .map((o) => o.label);
 }
 
@@ -122,6 +127,43 @@ const SYNONYMS = {
   acting: "drama",
   hiking: "outdoors",
   nature: "outdoors",
+  playground: "outdoors",
+  outdoor: "outdoors",
+  trips: "outdoors",
+  art: "art",
+  film: "film",
+  debate: "debate",
+  "public speaking": "debate",
+  university: "cat-pathways",
+  career: "cat-pathways",
+  community: "cat-community",
+  camping: "outdoors",
+  sport: "cat-sport",
+  athletic: "cat-sport",
+  arts: "cat-arts",
+  creative: "cat-arts",
+  computer: "cat-computing",
+  computing: "cat-computing",
+  technology: "cat-computing",
+  tech: "cat-computing",
+  academic: "cat-academics",
+  studies: "cat-academics",
+  maths: "maths",
+  math: "maths",
+  numbers: "maths",
+  reading: "writing",
+  read: "writing",
+  books: "writing",
+  stories: "writing",
+  debating: "debate",
+  mun: "debate",
+  robot: "robotics",
+  games: "game-design",
+  gaming: "game-design",
+  filming: "film",
+  video: "film",
+  volunteering: "cat-community",
+  service: "cat-community",
 };
 
 function findMentions(text) {
@@ -131,7 +173,8 @@ function findMentions(text) {
     if (lower.includes(o.label.toLowerCase())) ids.add(o.id);
   });
   Object.entries(SYNONYMS).forEach(([word, id]) => {
-    if (new RegExp(`\\b${word}`).test(lower)) ids.add(id);
+    // whole words, plus simple endings: read, reads, reading; robot, robots
+    if (new RegExp(`\\b${word}(?:s|es|ing|ed|er)?\\b`).test(lower)) ids.add(id);
   });
   return ids;
 }
@@ -185,10 +228,25 @@ function applyParsed(ctx, p) {
     next[g] = ctx[g].filter((id) => !p.removeIds.includes(id));
   });
   p.addIds.forEach((id) => {
-    const g = findOption(id)?.group;
+    const opt = findOption(id);
+    const g = opt?.group;
     if (g && !next[g].includes(id)) next[g] = [...next[g], id];
+    // A specific (e.g. Tennis) brings its area (Sport) with it
+    if (opt?.parent && !next.interests.includes(opt.parent)) {
+      next.interests = [...next.interests, opt.parent];
+    }
   });
   return next;
+}
+
+// Questions go to the Lion; statements can change the journey
+function isQuestionText(text) {
+  return (
+    /\?\s*$/.test(text) ||
+    /^(what|how|when|where|who|why|which|can|could|does|do|is|are|will|would|tell me|show me)\b/i.test(
+      text.trim(),
+    )
+  );
 }
 
 // Reads a frontend-tool URL like ...?add=music&remove=art&year=6
@@ -483,6 +541,33 @@ export default function Compass({
     });
   }, []);
 
+  // What the parent says or types in the Lion chat (including voice calls)
+  // updates this child's journey, e.g. "he loves to read" adds Reading.
+  useEffect(() => {
+    const onSaid = (e) => {
+      const { text, childId } = e.detail || {};
+      if (!text || (childId && child?.id && childId !== child.id)) return;
+      if (isQuestionText(text)) return;
+      const p = parseInput(text);
+      if (p.year == null && p.addIds.length === 0 && p.removeIds.length === 0)
+        return;
+      setCtx((c) => applyParsed(c, p));
+      const groupsAdded = new Set(p.addIds.map((id) => findOption(id)?.group));
+      setAnswered((a) => ({
+        interests: a.interests || groupsAdded.has("interests"),
+        languages: a.languages || groupsAdded.has("languages"),
+        priorities: a.priorities || groupsAdded.has("priorities"),
+      }));
+      setLionNote(
+        p.removeIds.length
+          ? "Easy, let’s change that."
+          : "Got it. I’ve added that to the journey.",
+      );
+    };
+    window.addEventListener("compass:said", onSaid);
+    return () => window.removeEventListener("compass:said", onSaid);
+  }, [child?.id]);
+
   // DCB links in answers or the chat: open the matching journey card.
   // (Site.jsx sends a cancelable "compass:link" event; preventDefault = handled.)
   useEffect(() => {
@@ -585,6 +670,33 @@ export default function Compass({
       );
   };
 
+  // Interests: an area and its specifics travel together
+  const toggleInterest = (id) => {
+    const opt = findOption(id);
+    const adding = !ctx.interests.includes(id);
+    setCtx((c) => {
+      let list = c.interests;
+      if (adding) {
+        list = [...list, id];
+        if (opt?.parent && !list.includes(opt.parent))
+          list = [...list, opt.parent];
+      } else {
+        // removing an area also removes its specifics
+        list = list.filter((x) => x !== id && findOption(x)?.parent !== id);
+      }
+      return { ...c, interests: list };
+    });
+    if (phase === "discovery" && adding) setLionNote(teaserFor(id));
+    if (phase === "journey")
+      setLionNote(
+        adding
+          ? "Got it. I’ve added that to your journey."
+          : "Easy, let’s change that.",
+      );
+  };
+  const toggleAny = (group, id) =>
+    group === "interests" ? toggleInterest(id) : toggle(group, id);
+
   const chooseAge = (age) => {
     const year = ageToYear(age);
     setCtx((c) => ({ ...c, age, year }));
@@ -617,12 +729,7 @@ export default function Compass({
     setInput("");
 
     // Questions go to the Lion, even if they mention an interest
-    const isQuestion =
-      /\?\s*$/.test(text) ||
-      /^(what|how|when|where|who|why|which|can|could|does|do|is|are|will|would|tell me|show me)\b/i.test(
-        text,
-      );
-    if (isQuestion) {
+    if (isQuestionText(text)) {
       setLionNote(
         "Good question. My answer is in the panel beside your journey.",
       );
@@ -697,13 +804,13 @@ export default function Compass({
           {(ctx.year != null || selectedLabels(ctx).length > 0) && (
             <ContextBar
               ctx={ctx}
-              onRemove={toggle}
+              onRemove={toggleAny}
               onEdit={() => setEditing((v) => !v)}
               editing={editing}
             />
           )}
           {editing && (
-            <ContextEditor ctx={ctx} onToggle={toggle} onAge={chooseAge} />
+            <ContextEditor ctx={ctx} onToggle={toggleAny} onAge={chooseAge} />
           )}
 
           <div className="question">
@@ -712,10 +819,9 @@ export default function Compass({
                 <p className="question__text">
                   Pick anything that sounds interesting
                 </p>
-                <Chips
-                  options={OPTIONS.explore}
+                <InterestPicker
                   selected={ctx.interests}
-                  onToggle={(id) => toggle("interests", id)}
+                  onToggle={toggleInterest}
                 />
                 <QuestionActions
                   primary={ctx.interests.length ? "That’s everything" : null}
@@ -752,18 +858,18 @@ export default function Compass({
                 )}
                 {goal === "interests" && (
                   <>
-                    <Chips
-                      options={OPTIONS.interests}
+                    <p className="question__hint">
+                      Pick any areas first, then tell me more if you like.
+                    </p>
+                    <InterestPicker
                       selected={ctx.interests}
-                      onToggle={(id) => toggle("interests", id)}
+                      onToggle={toggleInterest}
                     />
                     <QuestionActions
                       primary={
                         ctx.interests.length ? "That’s everything" : null
                       }
                       onPrimary={() => markAnswered("interests")}
-                      secondary="Not sure, let me explore"
-                      onSecondary={() => setExploreMode(true)}
                     />
                   </>
                 )}
@@ -818,13 +924,17 @@ export default function Compass({
             </div>
             <ContextBar
               ctx={ctx}
-              onRemove={toggle}
+              onRemove={toggleAny}
               onEdit={() => setEditing((v) => !v)}
               editing={editing}
             />
             {editing && (
               <div ref={editorRef} className="editor-anchor">
-                <ContextEditor ctx={ctx} onToggle={toggle} onAge={chooseAge} />
+                <ContextEditor
+                  ctx={ctx}
+                  onToggle={toggleAny}
+                  onAge={chooseAge}
+                />
               </div>
             )}
           </header>
@@ -1031,6 +1141,27 @@ function ContextBar({ ctx, onRemove, onEdit, editing }) {
   );
 }
 
+// Areas first; picking an area opens its specifics underneath
+function InterestPicker({ selected, onToggle }) {
+  const areas = INTEREST_AREAS.map((a) => ({ id: a.id, label: a.label }));
+  const open = INTEREST_AREAS.filter(
+    (a) => a.children.length && selected.includes(a.id),
+  );
+  return (
+    <div className="interest-picker">
+      <Chips options={areas} selected={selected} onToggle={onToggle} />
+      {open.map((a) => (
+        <div key={a.id} className="subpick">
+          <p className="subpick__q">
+            <span className="subpick__area">{a.label}</span> {a.prompt}
+          </p>
+          <Chips options={a.children} selected={selected} onToggle={onToggle} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ContextEditor({ ctx, onToggle, onAge }) {
   return (
     <div className="editor">
@@ -1051,8 +1182,7 @@ function ContextEditor({ ctx, onToggle, onAge }) {
         </select>
       </label>
       <p className="editor__label">Interests</p>
-      <Chips
-        options={OPTIONS.interests}
+      <InterestPicker
         selected={ctx.interests}
         onToggle={(id) => onToggle("interests", id)}
       />

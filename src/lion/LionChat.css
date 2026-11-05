@@ -582,3 +582,227 @@
   color: var(--jade);
   font-weight: 600;
 }
+
+/* "Shared Sumar's details with the Lion" */
+.lion-voice-log__note {
+  align-self: center;
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--jade-soft);
+  color: var(--jade);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+/* ── Media under answers ───────────────────── */
+.answer-media {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0.25rem 0 0.75rem;
+}
+.answer-media__strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 0.5rem;
+}
+.answer-media__img {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: 12px;
+  background: #eef0f4;
+  cursor: zoom-in;
+}
+.answer-media__img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s;
+}
+.answer-media__img:hover img {
+  transform: scale(1.05);
+}
+.answer-media__img span {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 1.25rem 0.6rem 0.45rem;
+  background: linear-gradient(transparent, rgba(21, 35, 59, 0.75));
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-align: left;
+}
+.answer-media__wide {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line, #e1e5eb);
+  border-radius: 14px;
+  background: var(--surface, #fff);
+  color: var(--ink, #15233b);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.answer-media__wide:hover {
+  border-color: var(--ink, #15233b);
+}
+.answer-media__thumb {
+  position: relative;
+  width: 112px;
+  aspect-ratio: 16 / 10;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--ink, #15233b);
+}
+.answer-media__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.answer-media__play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(21, 35, 59, 0.35);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.answer-media__label {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.answer-media__label small {
+  color: var(--muted, #5c6678);
+  font-size: 0.8rem;
+}
+
+/* ── The viewer (photo, video, tour) ───────── */
+.lion-viewer {
+  --ink: #15233b;
+  --muted: #5c6678;
+  --jade: #2e6a5c;
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(21, 35, 59, 0.72);
+  font-family: "Figtree", system-ui, sans-serif;
+}
+.lion-viewer__panel {
+  width: min(960px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+.lion-viewer__panel--tour {
+  width: min(1200px, 100%);
+  height: 100%;
+}
+.lion-viewer__bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem 0.75rem 1.25rem;
+  border-bottom: 1px solid #e1e5eb;
+}
+.lion-viewer__bar p {
+  margin: 0;
+  font-family: "Literata", Georgia, serif;
+  font-weight: 600;
+}
+.lion-viewer__close {
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.lion-viewer__close:hover {
+  background: #f6f7f9;
+}
+.lion-viewer__stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: #0f1828;
+}
+.lion-viewer__stage img,
+.lion-viewer__stage video {
+  max-width: 100%;
+  max-height: 72vh;
+  display: block;
+}
+.lion-viewer__stage iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 60vh;
+  border: none;
+}
+.lion-viewer__panel--video .lion-viewer__stage iframe {
+  aspect-ratio: 16 / 9;
+  height: auto;
+  min-height: 0;
+}
+.lion-viewer__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.lion-viewer__foot:empty {
+  display: none;
+}
+.lion-viewer__foot a,
+.lion-viewer__more {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--jade);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .answer-media__img img {
+    transition: none;
+  }
+  .answer-media__img:hover img {
+    transform: none;
+  }
+}
