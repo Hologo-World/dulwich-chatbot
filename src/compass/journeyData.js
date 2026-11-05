@@ -12,7 +12,7 @@ export const ADMISSIONS_URL = `${DCB_BASE_URL}/admissions/admissions-overview`
 export const VISIT_URL = `${DCB_BASE_URL}/admissions/visit/visit-us`
 
 export const STAGES = [
-    { id: 'now', title: 'Right now', needsMatch: true },
+    { id: 'now', title: 'Your Interests', needsMatch: true },
     { id: 'joining', title: 'Joining and settling in', needsMatch: false },
     { id: 'interests', title: 'Developing interests', needsMatch: true },
     { id: 'beyond', title: 'Beyond the classroom', needsMatch: false },
