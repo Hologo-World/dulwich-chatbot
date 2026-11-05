@@ -7,7 +7,15 @@ import {
   useRef,
   useState,
 } from "react";
-import { askInline, openAkemaChat } from "../compass/akemaBridge";
+import {
+  askInline,
+  forgetConversation,
+  openAkemaChat,
+  startVoiceCall,
+  voiceAvailable,
+} from "../compass/akemaBridge";
+import { emptyFamily, loadFamily, saveFamily } from "../compass/storage";
+import "./LionChat.css";
 
 // ─────────────────────────────────────────────────────────────
 // "Ask the Lion": answers from the Akema agent, shown on the page.
@@ -20,6 +28,52 @@ import { askInline, openAkemaChat } from "../compass/akemaBridge";
 const LionContext = createContext(null);
 export const useLion = () => useContext(LionContext);
 
+// ── One chat per child, kept in this browser ────────────────
+// threads: { [childId]: entries[] }
+// sent:    { [childId]: the family context the Lion already has }
+const THREADS_KEY = "compass-lion-threads";
+const SENT_KEY = "compass-lion-sent";
+const OLD_THREAD_KEY = "compass-lion-thread"; // the single shared chat from before
+
+const readJSON = (key, fallback) => {
+  try {
+    return JSON.parse(localStorage.getItem(key)) ?? fallback;
+  } catch {
+    return fallback;
+  }
+};
+const writeJSON = (key, value) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage unavailable */
+  }
+};
+const finished = (list) =>
+  (Array.isArray(list) ? list : []).filter((m) => m.status !== "pending");
+
+function loadThreads(firstChildId) {
+  const saved = readJSON(THREADS_KEY, null);
+  if (saved && typeof saved === "object") {
+    return Object.fromEntries(
+      Object.entries(saved).map(([k, v]) => [k, finished(v)]),
+    );
+  }
+  // Move the old shared chat to the first child
+  const old = finished(readJSON(OLD_THREAD_KEY, []));
+  return old.length ? { [firstChildId]: old } : {};
+}
+
+// The family always exists, so every question belongs to a child's chat
+function initialChildId() {
+  let family = loadFamily();
+  if (!family) {
+    family = emptyFamily();
+    saveFamily(family);
+  }
+  return family.activeId || family.children[0]?.id;
+}
+
 const SUGGESTIONS = [
   "What makes DCB different?",
   "How is Mandarin taught at DCB?",
@@ -27,56 +81,151 @@ const SUGGESTIONS = [
   "What sport can students do?",
 ];
 
-export function LionProvider({ children, onLink }) {
+// onOpen: called whenever the chat opens (the site opens the journey behind it)
+export function LionProvider({ children, onLink, onOpen }) {
   const [sheetOpen, setSheetOpen] = useState(false);
-  const [thread, setThread] = useState([]);
-  const lastContext = useRef(null); // family context the Lion already has
-  const pageContext = useRef(null); // context of the page the parent is on
-  const onLinkRef = useRef(onLink);
 
+  // Whose chat is showing: follows the child selected in the journey
+  const [activeKey, setActiveKey] = useState(initialChildId);
+  const activeKeyRef = useRef(activeKey);
+  const [threads, setThreads] = useState(() => loadThreads(activeKey));
+  const sent = useRef(readJSON(SENT_KEY, {}));
+
+  const pageContext = useRef(null); // the active child's selections, as a sentence
+  const [contextLabel, setContextLabel] = useState(null); // e.g. "Maya"
+  const [memory, setMemory] = useState([]); // e.g. ["Year 4, age 8", "Art"]
+  const [familyList, setFamilyList] = useState([]); // [{ id, label }]
+  const [requestedChild, setRequestedChild] = useState(null);
+
+  const onLinkRef = useRef(onLink);
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
   useEffect(() => {
     onLinkRef.current = onLink;
   }, [onLink]);
 
-  // Sends the family context once, then only again when it changes
-  const ask = useCallback(async (question, { context } = {}) => {
+  useEffect(() => {
+    writeJSON(
+      THREADS_KEY,
+      Object.fromEntries(
+        Object.entries(threads).map(([k, v]) => [k, finished(v).slice(-50)]),
+      ),
+    );
+  }, [threads]);
+
+  const updateThread = (key, fn) =>
+    setThreads((all) => ({ ...all, [key]: fn(all[key] || []) }));
+
+  // Every question goes into the chat of the child it was asked for, and to
+  // that child's own Akema conversation. The child's selections are sent the
+  // first time and again whenever they change, so the Lion always knows them.
+  const ask = useCallback(async (question, { context, source } = {}) => {
+    const key = activeKeyRef.current;
+    const id = `${Date.now()}-${Math.random()}`;
+    updateThread(key, (t) => [
+      ...t,
+      { id, question, source, status: "pending", at: new Date().toISOString() },
+    ]);
     const message =
-      context && context !== lastContext.current
+      context && context !== sent.current[key]
         ? `${context} ${question}`
         : question;
-    const answer = await askInline(message);
-    if (context) lastContext.current = context;
-    return answer;
+    try {
+      const answer = await askInline(message, { conversationKey: key });
+      if (context) {
+        sent.current = { ...sent.current, [key]: context };
+        writeJSON(SENT_KEY, sent.current);
+      }
+      updateThread(key, (t) =>
+        t.map((m) => (m.id === id ? { ...m, status: "done", answer } : m)),
+      );
+      return answer;
+    } catch (err) {
+      updateThread(key, (t) =>
+        t.map((m) =>
+          m.id === id ? { ...m, status: "error", answer: err.message } : m,
+        ),
+      );
+      throw err;
+    }
+  }, []);
+
+  // Adds a finished entry (e.g. a voice call transcript) to a child's chat
+  const addEntry = useCallback((entry, key = activeKeyRef.current) => {
+    updateThread(key, (t) => [
+      ...t,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        status: "done",
+        at: new Date().toISOString(),
+        ...entry,
+      },
+    ]);
+  }, []);
+
+  const openSheet = useCallback(() => {
+    setSheetOpen(true);
+    onOpenRef.current?.();
   }, []);
 
   const askInSheet = useCallback(
     (question, opts = {}) => {
-      const id = `${Date.now()}-${Math.random()}`;
-      const context = opts.context ?? pageContext.current;
-      setSheetOpen(true);
-      setThread((t) => [...t, { id, question, status: "pending" }]);
-      ask(question, { context }).then(
-        (answer) =>
-          setThread((t) =>
-            t.map((m) => (m.id === id ? { ...m, status: "done", answer } : m)),
-          ),
-        (err) =>
-          setThread((t) =>
-            t.map((m) =>
-              m.id === id ? { ...m, status: "error", answer: err.message } : m,
-            ),
-          ),
-      );
+      openSheet();
+      ask(question, {
+        context: opts.context ?? pageContext.current,
+        source: opts.source,
+      }).catch(() => {
+        /* the error is shown in the conversation */
+      });
     },
-    [ask],
+    [ask, openSheet],
   );
 
-  const openSheet = useCallback(() => setSheetOpen(true), []);
   const closeSheet = useCallback(() => setSheetOpen(false), []);
-  const setPageContext = useCallback((c) => {
-    pageContext.current = c;
+
+  // Called by the open child's journey: who they are and what's known about them
+  const setPageContext = useCallback(
+    (c, label = null, childId, memoryChips) => {
+      pageContext.current = c;
+      setContextLabel(label);
+      if (childId) {
+        activeKeyRef.current = childId;
+        setActiveKey(childId);
+      }
+      if (memoryChips) setMemory(memoryChips);
+    },
+    [],
+  );
+
+  // The family's children, for the switcher in the chat
+  const setChildren = useCallback((list) => setFamilyList(list), []);
+
+  // Switching child from the chat: the journey follows (see Family.jsx)
+  const selectChild = useCallback((id) => {
+    activeKeyRef.current = id;
+    setActiveKey(id);
+    setRequestedChild(id);
   }, []);
+  const clearRequest = useCallback(() => setRequestedChild(null), []);
+
+  // A child removed from the family: drop their chat and conversation
+  const forgetChild = useCallback((id) => {
+    setThreads((all) => {
+      const next = { ...all };
+      delete next[id];
+      return next;
+    });
+    const nextSent = { ...sent.current };
+    delete nextSent[id];
+    sent.current = nextSent;
+    writeJSON(SENT_KEY, nextSent);
+    forgetConversation(id);
+  }, []);
+
   const handleLink = useCallback((url) => !!onLinkRef.current?.(url), []);
+  const thread = threads[activeKey] || [];
 
   const value = useMemo(
     () => ({
@@ -86,8 +235,18 @@ export function LionProvider({ children, onLink }) {
       openSheet,
       closeSheet,
       thread,
+      activeKey,
       handleLink,
       setPageContext,
+      contextLabel,
+      memory,
+      familyList,
+      setChildren,
+      selectChild,
+      requestedChild,
+      clearRequest,
+      forgetChild,
+      addEntry,
       openChat: openAkemaChat,
     }),
     [
@@ -97,8 +256,18 @@ export function LionProvider({ children, onLink }) {
       openSheet,
       closeSheet,
       thread,
+      activeKey,
       handleLink,
       setPageContext,
+      contextLabel,
+      memory,
+      familyList,
+      setChildren,
+      selectChild,
+      requestedChild,
+      clearRequest,
+      forgetChild,
+      addEntry,
     ],
   );
 
@@ -110,7 +279,7 @@ export function LionProvider({ children, onLink }) {
   );
 }
 
-// [state, run] for an inline answer. state: { status, question, answer }
+// [state, run, reset] for an inline answer. state: { status, question, answer }
 export function useLionAnswer(initial) {
   const { ask } = useLion();
   const [state, setState] = useState(() =>
@@ -130,8 +299,8 @@ export function useLionAnswer(initial) {
   return [state, run, reset];
 }
 
-export function LionAnswerCard({ state }) {
-  const { handleLink, openChat } = useLion();
+export function LionAnswerCard({ state, inSheet = false }) {
+  const { handleLink, openSheet } = useLion();
   if (!state || state.status === "idle") return null;
 
   return (
@@ -158,9 +327,11 @@ export function LionAnswerCard({ state }) {
       {state.status === "done" && (
         <>
           <Markdown text={state.answer} onLink={handleLink} />
-          <button type="button" className="link" onClick={openChat}>
-            Continue in chat
-          </button>
+          {!inSheet && (
+            <button type="button" className="link" onClick={openSheet}>
+              See the whole conversation
+            </button>
+          )}
         </>
       )}
 
@@ -171,105 +342,457 @@ export function LionAnswerCard({ state }) {
   );
 }
 
-// ── The side panel (like an "Ask Gemini" panel) ─────────────
+// ── The full-page chat, with the journey behind it ──────────
+// Closed: a Lion tab on the right edge pulls it back in.
 function LionSheet() {
-  const { sheetOpen, closeSheet, thread, askInSheet, openChat } = useLion();
+  const {
+    sheetOpen,
+    openSheet,
+    closeSheet,
+    thread,
+    askInSheet,
+    contextLabel,
+    handleLink,
+    addEntry,
+    activeKey,
+    memory,
+    familyList,
+    selectChild,
+  } = useLion();
   const [question, setQuestion] = useState("");
   const endRef = useRef(null);
   const inputRef = useRef(null);
 
+  // ── Voice ──
+  const [voiceOk, setVoiceOk] = useState(false);
+  const [call, setCall] = useState(null); // { status, lines, muted, error }
+  const callRef = useRef(null);
+  const linesRef = useRef([]);
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
+    if (!sheetOpen) return;
+    let alive = true;
+    voiceAvailable().then((ok) => alive && setVoiceOk(ok));
+    return () => {
+      alive = false;
+    };
+  }, [sheetOpen]);
+
+  const startCall = async () => {
+    const callKey = activeKey; // the child this call is about
+    linesRef.current = [];
+    setCall({ status: "connecting", lines: [], muted: false });
+    try {
+      callRef.current = await startVoiceCall({
+        conversationKey: callKey,
+        onStatus: (status) => setCall((c) => (c ? { ...c, status } : c)),
+        onTranscript: (seg) => {
+          const lines = linesRef.current.some((l) => l.id === seg.id)
+            ? linesRef.current.map((l) => (l.id === seg.id ? seg : l))
+            : [...linesRef.current, seg];
+          linesRef.current = lines;
+          setCall((c) => (c ? { ...c, lines } : c));
+        },
+        onEnd: () => {
+          // Keep the call in the conversation as a transcript
+          const lines = linesRef.current.filter((l) => l.text.trim());
+          if (lines.length)
+            addEntry({ kind: "voice", source: "a voice call", lines }, callKey);
+          callRef.current = null;
+          setCall(null);
+        },
+      });
+    } catch (err) {
+      console.error("[compass] voice call failed", err);
+      callRef.current = null;
+      setCall({
+        status: "error",
+        lines: [],
+        muted: false,
+        error:
+          "The call couldn’t start. Check that the browser can use your microphone, then try again.",
+      });
+    }
+  };
+
+  const toggleMute = () => {
+    if (!call || !callRef.current) return;
+    const muted = !call.muted;
+    callRef.current.setMuted(muted); // side effect outside the state update
+    setCall((c) => (c ? { ...c, muted } : c));
+  };
+
+  const endCall = () => {
+    if (callRef.current) callRef.current.end();
+    else setCall(null);
+  };
+
+  // Hiding the chat, or switching to another child, ends any call
+  useEffect(() => {
+    if (!sheetOpen && callRef.current) callRef.current.end();
+  }, [sheetOpen]);
+  useEffect(() => {
+    if (callRef.current) callRef.current.end();
+  }, [activeKey]);
+  useEffect(() => () => callRef.current?.end(), []);
+
+  useEffect(() => {
+    if (sheetOpen) endRef.current?.scrollIntoView({ block: "end" });
   }, [thread, sheetOpen]);
 
   useEffect(() => {
     if (!sheetOpen) return;
     inputRef.current?.focus({ preventScroll: true });
-    const onKey = (e) => e.key === "Escape" && closeSheet();
+    const onKey = (e) => {
+      // A card drawer opened from an answer closes first
+      if (e.key === "Escape" && !document.querySelector(".drawer-backdrop"))
+        closeSheet();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [sheetOpen, closeSheet]);
 
+  const resize = (el) => {
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  };
+
   const submit = (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     const q = question.trim();
     if (!q) return;
     setQuestion("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
     askInSheet(q);
   };
 
   return (
-    <aside
-      className={`lion-sheet${sheetOpen ? " lion-sheet--open" : ""}`}
-      aria-label="Ask the Lion"
-      aria-hidden={!sheetOpen}
-    >
-      <header className="lion-sheet__head">
-        <span className="lion-sheet__icon" aria-hidden="true">
+    <>
+      <button
+        type="button"
+        className={`lion-tab${sheetOpen ? " lion-tab--hidden" : ""}`}
+        onClick={openSheet}
+        aria-label="Open the chat with the Lion"
+        tabIndex={sheetOpen ? -1 : 0}
+      >
+        <span className="lion-tab__icon" aria-hidden="true">
           🦁
         </span>
-        <div>
-          <h2>Ask the Lion</h2>
-          <p>Answers from verified DCB information</p>
-        </div>
-        <button
-          type="button"
-          className="lion-sheet__close"
-          aria-label="Close"
-          onClick={closeSheet}
-        >
-          ×
-        </button>
-      </header>
+        <span className="lion-tab__text">Ask the Lion</span>
+      </button>
 
-      <div className="lion-sheet__body">
-        {thread.length === 0 ? (
-          <div className="lion-sheet__empty">
-            <p>Ask anything about life and learning at DCB.</p>
-            <div className="chips">
-              {SUGGESTIONS.map((s) => (
+      <section
+        className={`lion-sheet lion-chat${sheetOpen ? " lion-sheet--open" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Chat with the Lion"
+        aria-hidden={!sheetOpen}
+      >
+        <header className="lion-chat__bar">
+          <span className="lion-chat__avatar" aria-hidden="true">
+            🦁
+          </span>
+          <div className="lion-chat__who">
+            <strong>The Lion</strong>
+            <span>Answers from verified DCB information</span>
+          </div>
+          {familyList.length > 1 ? (
+            <div
+              className="lion-chat__children"
+              role="tablist"
+              aria-label="Whose chat"
+            >
+              {familyList.map((c) => (
                 <button
-                  key={s}
+                  key={c.id}
                   type="button"
-                  className="chip"
-                  onClick={() => askInSheet(s)}
+                  role="tab"
+                  aria-selected={c.id === activeKey}
+                  className={`lion-chat__child${c.id === activeKey ? " lion-chat__child--on" : ""}`}
+                  onClick={() => selectChild(c.id)}
                 >
-                  {s}
+                  {c.label}
                 </button>
               ))}
             </div>
+          ) : (
+            contextLabel && (
+              <span className="lion-chat__context">
+                Thinking about {contextLabel}
+              </span>
+            )
+          )}
+          <button
+            type="button"
+            className="lion-chat__hide"
+            onClick={closeSheet}
+          >
+            Back to the journey
+            <span aria-hidden="true">›</span>
+          </button>
+        </header>
+
+        {memory.length > 0 && (
+          <div
+            className="lion-chat__memory"
+            aria-label="What the Lion remembers"
+          >
+            <span>What I know about {contextLabel || "your child"}</span>
+            <ul>
+              {memory.map((m) => (
+                <li key={m}>{m}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="lion-chat__scroll">
+          <div className="lion-chat__column">
+            {thread.length === 0 && !call ? (
+              <div className="lion-chat__empty">
+                <span className="lion-chat__hello" aria-hidden="true">
+                  🦁
+                </span>
+                <h2>How can I help you explore DCB?</h2>
+                <p>
+                  Ask about learning, activities, admissions or everyday life at
+                  the College.
+                  {contextLabel ? ` I’ll keep ${contextLabel} in mind.` : ""}
+                </p>
+                <div className="lion-chat__suggestions">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className="lion-suggestion"
+                      onClick={() => askInSheet(s)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              thread.map((m) =>
+                m.kind === "voice" ? (
+                  <VoiceTranscript key={m.id} lines={m.lines} />
+                ) : (
+                  <div key={m.id} className="lion-turn2">
+                    {m.source && (
+                      <p className="lion-msg__source">Asked from {m.source}</p>
+                    )}
+                    <div className="lion-msg lion-msg--you">
+                      <p>{m.question}</p>
+                    </div>
+                    <div
+                      className="lion-msg lion-msg--lion"
+                      aria-live="polite"
+                      aria-busy={m.status === "pending"}
+                    >
+                      <span className="lion-msg__avatar" aria-hidden="true">
+                        🦁
+                      </span>
+                      <div className="lion-msg__body">
+                        {m.status === "pending" && (
+                          <div className="lion-answer__pending">
+                            <span className="sr-only">
+                              Looking through verified DCB information
+                            </span>
+                            <i />
+                            <i />
+                            <i />
+                          </div>
+                        )}
+                        {m.status === "done" && (
+                          <Markdown text={m.answer} onLink={handleLink} />
+                        )}
+                        {m.status === "error" && (
+                          <p className="lion-answer__error">{m.answer}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ),
+              )
+            )}
+            {call && call.lines.length > 0 && (
+              <VoiceTranscript lines={call.lines} live />
+            )}
+            <div ref={endRef} />
+          </div>
+        </div>
+
+        {call ? (
+          <VoiceBar
+            call={call}
+            onMute={toggleMute}
+            onEnd={endCall}
+            onRetry={startCall}
+          />
+        ) : (
+          <form className="lion-chat__composer" onSubmit={submit}>
+            <div className="lion-chat__box">
+              <textarea
+                ref={inputRef}
+                rows={1}
+                value={question}
+                onChange={(e) => {
+                  setQuestion(e.target.value);
+                  resize(e.target);
+                }}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing
+                  ) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
+                placeholder="Ask the Lion anything about DCB"
+                aria-label="Message the Lion"
+              />
+              {voiceOk && (
+                <button
+                  type="button"
+                  className="lion-chat__mic"
+                  onClick={startCall}
+                  aria-label="Talk to the Lion"
+                  title="Talk to the Lion"
+                >
+                  <MicIcon />
+                </button>
+              )}
+              <button
+                type="submit"
+                className="lion-chat__send"
+                aria-label="Send"
+                disabled={!question.trim()}
+              >
+                <span aria-hidden="true">↑</span>
+              </button>
+            </div>
+            <p className="lion-chat__fine">
+              The Lion answers only from DCB’s verified information.
+            </p>
+          </form>
+        )}
+      </section>
+    </>
+  );
+}
+
+// ── Voice pieces ────────────────────────────────────────────
+const VOICE_STATUS = {
+  connecting: "Connecting to the Lion…",
+  initializing: "Connecting to the Lion…",
+  listening: "Listening",
+  thinking: "Thinking…",
+  speaking: "The Lion is speaking",
+};
+
+function MicIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </svg>
+  );
+}
+
+function VoiceTranscript({ lines, live = false }) {
+  const { handleLink } = useLion();
+  return (
+    <div
+      className={`lion-turn2 lion-voice-log${live ? " lion-voice-log--live" : ""}`}
+    >
+      <p className="lion-msg__source">
+        {live ? "Voice call, live" : "Voice call"}
+      </p>
+      {lines.map((l) =>
+        l.role === "user" ? (
+          <div key={l.id} className="lion-msg lion-msg--you">
+            <p>{l.text}</p>
           </div>
         ) : (
-          thread.map((m) => (
-            <div key={m.id} className="lion-turn">
-              <p className="lion-turn__q">{m.question}</p>
-              <LionAnswerCard state={m} />
+          <div key={l.id} className="lion-msg lion-msg--lion">
+            <span className="lion-msg__avatar" aria-hidden="true">
+              🦁
+            </span>
+            <div className="lion-msg__body">
+              {/* Links in the Lion's words show as links, not [text](url) */}
+              <Markdown text={l.text} onLink={handleLink} />
             </div>
-          ))
-        )}
-        <div ref={endRef} />
-      </div>
+          </div>
+        ),
+      )}
+    </div>
+  );
+}
 
-      <form className="lion-sheet__form" onSubmit={submit}>
-        <input
-          ref={inputRef}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask a follow-up"
-          aria-label="Ask the Lion"
-        />
-        <button type="submit" className="btn btn--small">
-          Ask
-        </button>
-      </form>
-      <button
-        type="button"
-        className="link lion-sheet__chat"
-        onClick={openChat}
+function VoiceBar({ call, onMute, onEnd, onRetry }) {
+  if (call.status === "error") {
+    return (
+      <div className="lion-voice" role="status">
+        <p className="lion-voice__error">{call.error}</p>
+        <div className="lion-voice__actions">
+          <button type="button" className="lion-voice__btn" onClick={onRetry}>
+            Try again
+          </button>
+          <button
+            type="button"
+            className="lion-voice__btn lion-voice__btn--end"
+            onClick={onEnd}
+          >
+            Back to typing
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const state = VOICE_STATUS[call.status] ? call.status : "listening";
+  return (
+    <div className="lion-voice">
+      <span
+        className={`lion-voice__orb lion-voice__orb--${state}`}
+        aria-hidden="true"
       >
-        Open the full chat
-      </button>
-    </aside>
+        🦁
+      </span>
+      <p className="lion-voice__status" role="status" aria-live="polite">
+        {call.muted ? "Microphone off" : VOICE_STATUS[state]}
+      </p>
+      <div className="lion-voice__actions">
+        <button
+          type="button"
+          className={`lion-voice__btn${call.muted ? " lion-voice__btn--on" : ""}`}
+          onClick={onMute}
+          aria-pressed={call.muted}
+          disabled={call.status === "connecting"}
+        >
+          {call.muted ? "Unmute" : "Mute"}
+        </button>
+        <button
+          type="button"
+          className="lion-voice__btn lion-voice__btn--end"
+          onClick={onEnd}
+        >
+          End call
+        </button>
+      </div>
+    </div>
   );
 }
 

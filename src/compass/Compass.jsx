@@ -6,11 +6,13 @@ import {
   STAGES,
   VISIT_URL,
   YEARS,
+  AGES,
+  AGE_CUTOFF,
+  ageToYear,
 } from "./journeyData";
 import { onAkemaEvent } from "./akemaBridge";
 import { LionAnswerCard, useLion, useLionAnswer } from "../lion/Lion";
 import { logGap, readGaps } from "./gaps";
-import { clearJourney, loadJourney, saveJourney } from "./storage";
 import "./Compass.css";
 import "./Journey.css";
 
@@ -25,7 +27,13 @@ const ALL_OPTIONS = [
 const findOption = (id) => ALL_OPTIONS.find((o) => o.id === id);
 const yearLabel = (y) => YEARS.find((x) => x.value === y)?.label;
 
-const EMPTY = { year: null, interests: [], languages: [], priorities: [] };
+const EMPTY = {
+  age: null,
+  year: null,
+  interests: [],
+  languages: [],
+  priorities: [],
+};
 const NOT_ANSWERED = { interests: false, languages: false, priorities: false };
 
 function contextTags(ctx) {
@@ -141,10 +149,20 @@ const REMOVE_PATTERNS = [
 function parseInput(text) {
   const lower = text.toLowerCase();
 
+  // "8 year old", "8-year-old", "8 yrs old", "aged 8", "age 8"
+  let age = null;
+  const am =
+    lower.match(/\b(\d{1,2})\s*-?\s*(?:years?|yrs?)\s*-?\s*old\b/) ||
+    lower.match(/\bage[sd]?\s+(\d{1,2})\b/);
+  if (am && ageToYear(Number(am[1])) != null) age = Number(am[1]);
+
   let year = null;
-  const ym = lower.match(/year\s*(\d{1,2})/);
+  const ym = lower.match(/\byear\s*(\d{1,2})\b/);
   if (ym && Number(ym[1]) <= 13) year = Number(ym[1]);
   else if (/reception/.test(lower)) year = 0;
+  else if (/nursery/.test(lower)) year = -1;
+  else if (/toddler/.test(lower)) year = -2;
+  else if (age != null) year = ageToYear(age);
 
   // Everything named in a "take this out" phrase is removed...
   const removeIds = new Set();
@@ -156,11 +174,12 @@ function parseInput(text) {
 
   // ...and never added back, even though it's mentioned in the sentence
   const addIds = [...findMentions(lower)].filter((id) => !removeIds.has(id));
-  return { year, addIds, removeIds: [...removeIds] };
+  return { age, year, addIds, removeIds: [...removeIds] };
 }
 
 function applyParsed(ctx, p) {
   const next = { ...ctx };
+  if (p.age != null) next.age = p.age;
   if (p.year != null) next.year = p.year;
   GROUPS.forEach((g) => {
     next[g] = ctx[g].filter((id) => !p.removeIds.includes(id));
@@ -196,7 +215,8 @@ function teaserFor(id) {
 }
 
 // Turns the parent's selections into a natural message for the Lion
-function describeContext(ctx) {
+// `who` names the child, so the Lion keeps each child's details apart
+function describeContext(ctx, who = "My child") {
   const labels = (g) =>
     ctx[g].map((id) => findOption(id)?.label).filter(Boolean);
   const list = (arr) =>
@@ -205,8 +225,12 @@ function describeContext(ctx) {
       : `${arr.slice(0, -1).join(", ")} and ${arr[arr.length - 1]}`;
 
   const parts = [];
-  if (ctx.year != null)
-    parts.push(`My child would be joining ${yearLabel(ctx.year)}.`);
+  if (ctx.year != null) {
+    const age = ctx.age != null ? ` (age ${ctx.age} on ${AGE_CUTOFF})` : "";
+    parts.push(`${who} would be joining ${yearLabel(ctx.year)}${age}.`);
+  } else if (who !== "My child") {
+    parts.push(`This is about ${who.replace(/^My child\s*/, "my child ")}.`);
+  }
   const interests = labels("interests").map((l) => l.toLowerCase());
   if (interests.length) parts.push(`They're interested in ${list(interests)}.`);
   const languages = labels("languages");
@@ -226,6 +250,7 @@ function sanitizeCtx(c) {
       (id) => findOption(id)?.group === g,
     );
   return {
+    age: ageToYear(c.age) != null ? c.age : null,
     year: YEARS.some((y) => y.value === c.year) ? c.year : null,
     interests: valid("interests"),
     languages: valid("languages"),
@@ -238,7 +263,7 @@ const WELCOME_BACK =
 
 // ── Adaptive discovery: information goals, not a script ─────
 function nextGoal(ctx, answered) {
-  if (ctx.year == null) return "year";
+  if (ctx.year == null) return "age";
   if (!answered.interests) return "interests";
   if (!ctx.languages.length && !answered.languages) return "languages";
   if (!ctx.priorities.length && !answered.priorities) return "priorities";
@@ -246,7 +271,7 @@ function nextGoal(ctx, answered) {
 }
 
 const PROMPTS = {
-  year: "What year would they be joining?",
+  age: `How old will they be on ${AGE_CUTOFF}, when they’d join?`,
   interests: "What do they happily spend hours doing?",
   languages: "Which languages does your child feel most comfortable using?",
   priorities: "Anything you’d especially love school to help them grow in?",
@@ -257,9 +282,28 @@ const WELCOME =
   "Hello, I’m the DCB Lion. Tell me a little about your child and I’ll show you what their time at Dulwich College Beijing could include.";
 
 // ── Component ───────────────────────────────────────────────
-export default function Compass() {
-  // Pick up where the family left off (saved in this browser)
-  const [saved] = useState(loadJourney);
+export default function Compass({
+  child,
+  label = "your child",
+  familySize = 1,
+  onSave,
+  onRename,
+}) {
+  // Pick up where this child's journey left off (saved in this browser)
+  const [saved] = useState(() => child?.data || null);
+  const onSaveRef = useRef(onSave);
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
+
+  // How the Lion refers to this child, so each child's details stay separate
+  const childName = child?.name?.trim() || "";
+  const who = childName
+    ? `My child ${childName}`
+    : familySize > 1
+      ? `My child (${label})`
+      : "My child";
+  const possessive = childName ? `${childName}’s` : "your child’s";
   const [ctx, setCtx] = useState(() => sanitizeCtx(saved?.ctx));
   const [answered, setAnswered] = useState(() => ({
     ...NOT_ANSWERED,
@@ -281,6 +325,8 @@ export default function Compass() {
   const trackRef = useRef(null);
   const editorRef = useRef(null);
   const [editRequest, setEditRequest] = useState(0);
+
+  // Open the interests editor and bring it into view
   const openEditor = () => {
     setEditing(true);
     setEditRequest((n) => n + 1);
@@ -302,6 +348,7 @@ export default function Compass() {
   const [intro, runIntro, resetIntro] = useLionAnswer(saved?.intro);
 
   const journey = useMemo(() => buildJourney(ctx), [ctx]);
+  const contextText = describeContext(ctx, who);
   const goal = nextGoal(ctx, answered);
   const canReveal = ctx.year != null && ctx.interests.length > 0;
 
@@ -313,9 +360,18 @@ export default function Compass() {
 
   // Questions asked from the Ask the Lion panel carry the family context
   useEffect(() => {
-    setPageContext(phase === "journey" ? describeContext(ctx) : null);
-  }, [phase, ctx, setPageContext]);
-  useEffect(() => () => setPageContext(null), [setPageContext]);
+    // The Lion's memory of this child: sent with their next question and
+    // shown in the chat. Uses whatever has been chosen so far, even before
+    // the journey is revealed.
+    const memory = [
+      ctx.year != null
+        ? `${yearLabel(ctx.year)}${ctx.age != null ? `, age ${ctx.age}` : ""}`
+        : null,
+      ...selectedLabels(ctx),
+    ].filter(Boolean);
+    setPageContext(contextText || null, childName || label, child?.id, memory);
+  }, [contextText, childName, label, child?.id, ctx, setPageContext]);
+  useEffect(() => () => setPageContext(null, null), [setPageContext]);
 
   // Scroll up to the editor whenever it's asked for
   useEffect(() => {
@@ -379,7 +435,7 @@ export default function Compass() {
 
   // Save everything to this browser whenever it changes
   useEffect(() => {
-    saveJourney({
+    onSaveRef.current?.({
       ctx,
       answered,
       phase,
@@ -485,7 +541,6 @@ export default function Compass() {
 
   // Clear the saved journey and begin again
   const startOver = () => {
-    clearJourney();
     events.current = [];
     loggedGaps.current = new Set();
     prevJourney.current = null;
@@ -509,7 +564,10 @@ export default function Compass() {
 
   // Ask the Lion in the side panel, with the family context
   const ask = (question) =>
-    askInSheet(question, { context: describeContext(ctx) });
+    askInSheet(question, {
+      context: contextText,
+      source: `${possessive} journey`,
+    });
 
   const toggle = (group, id) => {
     const adding = !ctx[group].includes(id);
@@ -527,9 +585,10 @@ export default function Compass() {
       );
   };
 
-  const chooseYear = (value) => {
-    setCtx((c) => ({ ...c, year: value }));
-    if (phase === "journey") setLionNote(`Updated for ${yearLabel(value)}.`);
+  const chooseAge = (age) => {
+    const year = ageToYear(age);
+    setCtx((c) => ({ ...c, age, year }));
+    if (phase === "journey") setLionNote(`Updated for ${yearLabel(year)}.`);
   };
 
   const markAnswered = (group) => setAnswered((a) => ({ ...a, [group]: true }));
@@ -543,7 +602,8 @@ export default function Compass() {
     setEditing(false);
     // The Lion's first verified insight appears right beside the journey
     runIntro("What could their journey at DCB include?", {
-      context: describeContext(ctx),
+      context: contextText,
+      source: `${possessive} journey`,
     });
     setLionNote(
       "Based on the interests you shared, here are some opportunities you could explore at DCB. Anything you’d like me to change?",
@@ -621,8 +681,18 @@ export default function Compass() {
           <div className="lion lion--large" aria-hidden="true">
             🦁
           </div>
-          <h1 className="intro__title">Let’s build your child’s journey</h1>
+          <h1 className="intro__title">Let’s build {possessive} journey</h1>
           <p className="lion-say">{lionNote}</p>
+
+          <label className="child-name">
+            <span>Who’s this journey for?</span>
+            <input
+              value={child?.name || ""}
+              onChange={(e) => onRename?.(e.target.value)}
+              placeholder="A first name or nickname (optional)"
+              maxLength={30}
+            />
+          </label>
 
           {(ctx.year != null || selectedLabels(ctx).length > 0) && (
             <ContextBar
@@ -633,7 +703,7 @@ export default function Compass() {
             />
           )}
           {editing && (
-            <ContextEditor ctx={ctx} onToggle={toggle} onYear={chooseYear} />
+            <ContextEditor ctx={ctx} onToggle={toggle} onAge={chooseAge} />
           )}
 
           <div className="question">
@@ -655,19 +725,30 @@ export default function Compass() {
             ) : (
               <>
                 <p className="question__text">{PROMPTS[goal]}</p>
-                {goal === "year" && (
-                  <div className="chips" role="group" aria-label="Year group">
-                    {YEARS.map((y) => (
-                      <button
-                        key={y.value}
-                        type="button"
-                        className="chip"
-                        onClick={() => chooseYear(y.value)}
-                      >
-                        {y.label}
-                      </button>
-                    ))}
-                  </div>
+                {goal === "age" && (
+                  <>
+                    <div
+                      className="chips age-chips"
+                      role="group"
+                      aria-label="Age"
+                    >
+                      {AGES.map((a) => (
+                        <button
+                          key={a}
+                          type="button"
+                          className="chip chip--age"
+                          onClick={() => chooseAge(a)}
+                        >
+                          <strong>{a}</strong>
+                          <small>{yearLabel(ageToYear(a))}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="age-note">
+                      We’ll show the usual DCB year group for that age.
+                      Admissions will confirm the right year for your family.
+                    </p>
+                  </>
                 )}
                 {goal === "interests" && (
                   <>
@@ -725,6 +806,12 @@ export default function Compass() {
                 🦁
               </span>
               <div className="lion-dock__text">
+                <p className="one-child-note">
+                  Showing {possessive} journey.
+                  {familySize > 1
+                    ? " Each child has their own; switch at the top."
+                    : " Exploring for more than one child? Add them at the top."}
+                </p>
                 <p className="lion-say lion-say--small">{lionNote}</p>
                 <LionAnswerCard state={intro} />
               </div>
@@ -737,11 +824,7 @@ export default function Compass() {
             />
             {editing && (
               <div ref={editorRef} className="editor-anchor">
-                <ContextEditor
-                  ctx={ctx}
-                  onToggle={toggle}
-                  onYear={chooseYear}
-                />
+                <ContextEditor ctx={ctx} onToggle={toggle} onAge={chooseAge} />
               </div>
             )}
           </header>
@@ -784,7 +867,7 @@ export default function Compass() {
                     entry={s}
                     ctx={ctx}
                     onOpen={() => setOpenItem(s)}
-                    onInvite={() => setEditing(true)}
+                    onInvite={openEditor}
                   />
                 </li>
               ))}
@@ -863,6 +946,7 @@ export default function Compass() {
           key={openItem.item?.id || openItem.topic || openItem.stage.id}
           entry={openItem}
           ctx={ctx}
+          contextText={contextText}
           onClose={() => {
             setOpenItem(null);
             clearHash();
@@ -923,6 +1007,7 @@ function ContextBar({ ctx, onRemove, onEdit, editing }) {
       {ctx.year != null && (
         <span className="context__chip context__chip--year">
           {yearLabel(ctx.year)}
+          {ctx.age != null ? `, age ${ctx.age}` : ""}
         </span>
       )}
       {GROUPS.flatMap((g) =>
@@ -946,21 +1031,21 @@ function ContextBar({ ctx, onRemove, onEdit, editing }) {
   );
 }
 
-function ContextEditor({ ctx, onToggle, onYear }) {
+function ContextEditor({ ctx, onToggle, onAge }) {
   return (
     <div className="editor">
       <label className="editor__row">
-        <span>Joining</span>
+        <span>Age on {AGE_CUTOFF}</span>
         <select
-          value={ctx.year ?? ""}
-          onChange={(e) => onYear(Number(e.target.value))}
+          value={ctx.age ?? ""}
+          onChange={(e) => onAge(Number(e.target.value))}
         >
           <option value="" disabled>
-            Choose a year
+            Choose an age
           </option>
-          {YEARS.map((y) => (
-            <option key={y.value} value={y.value}>
-              {y.label}
+          {AGES.map((a) => (
+            <option key={a} value={a}>
+              {a} ({yearLabel(ageToYear(a))})
             </option>
           ))}
         </select>
@@ -987,7 +1072,7 @@ function ContextEditor({ ctx, onToggle, onYear }) {
   );
 }
 
-function StageCard({ entry, ctx, onOpen, onInvite = { openEditor } }) {
+function StageCard({ entry, ctx, onOpen, onInvite }) {
   if (entry.kind === "invite") {
     return (
       <button type="button" className="jcard jcard--invite" onClick={onInvite}>
@@ -1053,7 +1138,7 @@ function StageCard({ entry, ctx, onOpen, onInvite = { openEditor } }) {
   );
 }
 
-function Drawer({ entry, ctx, onClose }) {
+function Drawer({ entry, ctx, contextText, onClose }) {
   // The Lion answers right inside the drawer
   const [answer, runAnswer] = useLionAnswer();
 
@@ -1173,7 +1258,8 @@ function Drawer({ entry, ctx, onClose }) {
                 disabled={answer.status === "pending"}
                 onClick={() =>
                   runAnswer(`Tell me more about ${item.title} at DCB.`, {
-                    context: describeContext(ctx),
+                    context: contextText,
+                    source: `the ${item.title} card`,
                   })
                 }
               >

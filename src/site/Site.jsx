@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import Compass from "../compass/Compass";
+import CompassFamily from "../compass/Family";
 import { loadAkemaWidget, onAkemaLinkClick } from "../compass/akemaBridge";
 import {
   LionAnswerCard,
@@ -132,7 +132,8 @@ export default function Site() {
     loc.route === "home" ? <Home /> : <SectionPage route={loc.route} />;
 
   return (
-    <LionProvider onLink={handleLink}>
+    // The chat always opens with the family's journey behind it
+    <LionProvider onLink={handleLink} onOpen={openJourney}>
       <JourneyContext.Provider
         value={{ open: openJourney, close: closeJourney }}
       >
@@ -150,7 +151,7 @@ export default function Site() {
 }
 
 function Header({ route }) {
-  const { openSheet } = useLion();
+  const journey = useJourney();
   return (
     <header className="site-header">
       <a className="brand" href="#/">
@@ -174,9 +175,11 @@ function Header({ route }) {
           </a>
         ))}
       </nav>
-      <button type="button" className="ask-pill" onClick={openSheet}>
-        <span aria-hidden="true">🦁</span> Ask the Lion
-      </button>
+      <div className="site-header__actions">
+        <button type="button" className="header-journey" onClick={journey.open}>
+          Start a journey
+        </button>
+      </div>
     </header>
   );
 }
@@ -184,7 +187,6 @@ function Header({ route }) {
 // The journey as a full-screen experience on top of the site
 function JourneyOverlay({ open }) {
   const { close } = useJourney();
-  const { openSheet } = useLion();
   const ref = useRef(null);
 
   useEffect(() => {
@@ -207,17 +209,15 @@ function JourneyOverlay({ open }) {
       className={`journey-overlay${open ? " journey-overlay--open" : ""}`}
       role="dialog"
       aria-modal="true"
-      aria-label="Your child’s journey"
+      aria-label="Your family’s journeys"
       aria-hidden={!open}
     >
       <div className="journey-overlay__bar">
         <span className="journey-overlay__mark" aria-hidden="true">
           🦁
         </span>
-        <p className="journey-overlay__title">Your child’s journey</p>
-        <button type="button" className="ask-pill" onClick={openSheet}>
-          <span aria-hidden="true">🦁</span> Ask the Lion
-        </button>
+        <p className="journey-overlay__title">Your family’s journeys</p>
+
         <button
           type="button"
           className="journey-overlay__close"
@@ -228,77 +228,69 @@ function JourneyOverlay({ open }) {
         </button>
       </div>
       <div className="journey-overlay__body">
-        <Compass />
+        <CompassFamily />
       </div>
     </div>
   );
 }
 
+// One primary action (the journey), one secondary (ask the Lion)
 function Home() {
-  const [answer, run] = useLionAnswer();
-  const [question, setQuestion] = useState("");
   const journey = useJourney();
-
-  const submit = (e) => {
-    e.preventDefault();
-    const q = question.trim();
-    if (q) run(q);
-  };
+  const { openSheet, askInSheet } = useLion();
+  const continuing = hasSavedJourney();
 
   return (
     <>
       <section className="hero">
         <div className="hero__inner">
           <div className="hero__main">
-            <h1>What could school at DCB look like for your child?</h1>
+            <h1>What could school at DCB look like for your family?</h1>
             <p className="hero__lede">
-              Ask the Lion anything about the College, or let it build an
-              illustrative journey from what matters to your family.
+              Tell the Lion about your child or children, and see a journey
+              through DCB for each of them, built from the College’s own
+              verified information.
             </p>
 
-            <form className="ask-box" onSubmit={submit}>
-              <span className="ask-box__icon" aria-hidden="true">
-                🦁
-              </span>
-              <input
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask the Lion about DCB"
-                aria-label="Ask the Lion about DCB"
-              />
+            <div className="hero__actions">
               <button
-                type="submit"
-                className="ask-box__go"
-                disabled={answer.status === "pending"}
+                type="button"
+                className="hero__primary"
+                onClick={journey.open}
               >
-                Ask
+                {continuing
+                  ? "Continue your family’s journey"
+                  : "Start your family’s journey"}
               </button>
-            </form>
+              <button
+                type="button"
+                className="hero__secondary"
+                onClick={openSheet}
+              >
+                <span aria-hidden="true">🦁</span> Or ask the Lion a question
+              </button>
+            </div>
 
             <div className="hero__chips">
+              <span className="hero__chips-label">Families often ask</span>
               {HOME_QUESTIONS.map((q) => (
                 <button
                   key={q}
                   type="button"
                   className="suggest"
-                  onClick={() => {
-                    setQuestion(q);
-                    run(q);
-                  }}
+                  onClick={() => askInSheet(q, { source: "the home page" })}
                 >
                   {q}
                 </button>
               ))}
             </div>
-
-            <LionAnswerCard state={answer} />
           </div>
 
-          <aside className="journey-teaser" aria-label="Your child’s journey">
-            <h2>Your child’s journey</h2>
+          {/* A preview of the journey; the button above opens it */}
+          <aside className="journey-teaser" aria-label="What a journey shows">
+            <h2>Six stages, for each child</h2>
             <p>
-              Tell the Lion a little about your child and see six stages of
-              school life at DCB, built from verified College information.
+              Every journey is built around what you share, one child at a time.
             </p>
             <ol className="journey-teaser__stages">
               {STAGES.map((s, i) => (
@@ -308,15 +300,6 @@ function Home() {
                 </li>
               ))}
             </ol>
-            <button
-              type="button"
-              className="journey-teaser__cta"
-              onClick={journey.open}
-            >
-              {hasSavedJourney()
-                ? "Continue your child’s journey"
-                : "Build your child’s journey"}
-            </button>
           </aside>
         </div>
       </section>
@@ -385,7 +368,9 @@ function SectionCard({ section }) {
         <button
           type="button"
           className={`lion-btn${pending ? " lion-btn--busy" : ""}`}
-          onClick={() => run(section.question)}
+          onClick={() =>
+            run(section.question, { source: `the ${section.title} card` })
+          }
           disabled={pending}
           aria-label={`Ask the Lion about ${section.title}`}
           title="Ask the Lion"
@@ -419,7 +404,7 @@ function Footer() {
         className="site-footer__journey"
         onClick={journey.open}
       >
-        Build your child’s journey
+        Start your family’s journey
       </button>
     </footer>
   );

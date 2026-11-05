@@ -20,10 +20,23 @@ export const STAGES = [
     { id: 'ahead', title: 'Looking ahead', needsMatch: false },
 ]
 
+// Year groups from Toddler (DUCKS) to Year 13
 export const YEARS = [
+    { value: -2, label: 'Toddler' },
+    { value: -1, label: 'Nursery' },
     { value: 0, label: 'Reception' },
     ...Array.from({ length: 13 }, (_, i) => ({ value: i + 1, label: `Year ${i + 1}` })),
 ]
+
+// Parents give their child's age on 1 September of the year they'd join;
+// Compass shows the usual year group for that age.
+// ASSUMPTION TO CONFIRM WITH DCB: UK-style year groups (age 4 on
+// 1 September = Reception, 5 = Year 1 ... 17 = Year 13, 2 = Toddler, 3 = Nursery).
+// This matches DCB's own ranges (DUCKS ages 2 to 7, Junior School ages 7 to 11).
+export const AGE_CUTOFF = '1 September'
+export const AGES = Array.from({ length: 16 }, (_, i) => i + 2) // 2 to 17
+export const ageToYear = (age) =>
+    Number.isInteger(age) && age >= 2 && age <= 17 ? age - 4 : null
 
 // specific: true means a card only "covers" this interest if it lists it
 // in `covers`. Otherwise Compass says it isn't verified yet (and logs a gap)

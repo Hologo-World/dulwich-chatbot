@@ -134,6 +134,56 @@ function waitForChatbot(mountTimeout = 10000, bootTimeout = 6000) {
     })
 }
 
+// ── One Akema conversation per child ────────────────────────
+// Remembers which Akema conversation belongs to which child (or other
+// key), so each child's chat has its own memory on the Lion's side too.
+const CONV_KEY = 'compass-lion-conversations'
+
+function loadConversations() {
+    try {
+        return JSON.parse(localStorage.getItem(CONV_KEY)) || {}
+    } catch {
+        return {}
+    }
+}
+
+function rememberConversation(key, id) {
+    if (!key || !id) return
+    try {
+        const map = loadConversations()
+        map[key] = id
+        localStorage.setItem(CONV_KEY, JSON.stringify(map))
+    } catch {
+        /* storage unavailable */
+    }
+}
+
+export function forgetConversation(key) {
+    try {
+        const map = loadConversations()
+        delete map[key]
+        localStorage.setItem(CONV_KEY, JSON.stringify(map))
+    } catch {
+        /* storage unavailable */
+    }
+}
+
+// Points the widget at this key's conversation (or a fresh one)
+async function switchConversation(bot, key) {
+    if (!key) return
+    const id = loadConversations()[key]
+    if (!id) {
+        bot.state.conversation = null
+        return
+    }
+    if (bot.state.conversation?.id === id) return
+    try {
+        bot.state.conversation = await bot.api('GET', `/conversations/${encodeURIComponent(id)}`)
+    } catch {
+        bot.state.conversation = null // it may have been removed; start a new one
+    }
+}
+
 // ── Inline answers (the bubble stays closed) ────────────────
 async function readTimeline(bot, conversationId) {
     const res = await bot.api('GET', `/conversations/${conversationId}/timeline?limit=50`)
@@ -160,13 +210,14 @@ async function ensureLive(bot, timeout = 6000) {
 
 const isReply = (i) => i && i.type === 'message' && i.actor && i.actor.type !== 'visitor'
 
-async function askInlineNow(question, timeout = 60000) {
+async function askInlineNow(question, { conversationKey, timeout = 60000 } = {}) {
     loadAkemaWidget()
     const bot = await waitForChatbot()
     if (!bot) throw new Error('The Lion isn’t available right now. Please try again in a moment.')
     if (bot.state?.bootError) throw new Error('The Lion couldn’t connect. Please try again later.')
 
     await ensureLive(bot)
+    await switchConversation(bot, conversationKey)
 
     // A closed conversation can't take new messages, so start a fresh one
     const current = bot.state.conversation
@@ -210,6 +261,7 @@ async function askInlineNow(question, timeout = 60000) {
             throw new Error('Your question couldn’t be sent. Please try again.')
         }
         const conversationId = bot.state.conversation.id
+        rememberConversation(conversationKey, conversationId)
 
         // Wait for the reply: live events first, the timeline as a backup
         const deadline = Date.now() + timeout
@@ -245,11 +297,122 @@ async function askInlineNow(question, timeout = 60000) {
 
 // One question at a time, so each reply is matched to the right question
 let inlineQueue = Promise.resolve()
-export function askInline(question) {
-    const run = () => askInlineNow(question)
+// opts.conversationKey: e.g. a child's id, so each child has their own conversation
+export function askInline(question, opts = {}) {
+    const run = () => askInlineNow(question, opts)
     const result = inlineQueue.then(run, run)
     inlineQueue = result.catch(() => { })
     return result
+}
+
+// ── Voice calls ─────────────────────────────────────────────
+// Rebuilds the widget's own voice feature for our chat: the same
+// LiveKit client and /voice/token endpoint the widget uses, with our UI.
+
+// True when Akema has voice switched on for this website and language
+export async function voiceAvailable() {
+    loadAkemaWidget()
+    const bot = await waitForChatbot()
+    const voice = bot?.state?.voice
+    return !!(
+        bot &&
+        !bot.state.bootError &&
+        bot.state.features?.voice === true &&
+        voice?.clientUrl &&
+        (voice.languages || []).includes(bot.state.language)
+    )
+}
+
+// Starts a call. Callbacks:
+//   onStatus('connecting' | 'listening' | 'thinking' | 'speaking')
+//   onTranscript({ id, role: 'user' | 'assistant', text })  (text grows as it streams)
+//   onEnd()
+// Returns { setMuted(bool), end() }.
+export async function startVoiceCall({ onStatus, onTranscript, onEnd, conversationKey } = {}) {
+    loadAkemaWidget()
+    const bot = await waitForChatbot()
+    if (!bot || bot.state.bootError) throw new Error('The Lion isn’t available right now.')
+    await ensureLive(bot) // also registers the visitor, which the token needs
+    await switchConversation(bot, conversationKey)
+
+    // Join the current conversation if it's open, so voice and text share it
+    const conv = bot.state.conversation
+    const conversationId =
+        conv && conv.status !== 'resolved' && conv.acceptsMessages !== false ? conv.id : bot.ulid()
+
+    onStatus?.('connecting')
+    const [lk, token] = await Promise.all([
+        import(/* @vite-ignore */ bot.state.voice.clientUrl),
+        bot.api('POST', '/voice/token', { conversationId }),
+    ])
+
+    rememberConversation(conversationKey, token.conversationId || conversationId)
+
+    const room = new lk.Room()
+    const audio = new Set()
+    let ended = false
+    const finish = () => {
+        if (ended) return
+        ended = true
+        audio.forEach((el) => el.remove())
+        audio.clear()
+        onEnd?.()
+    }
+
+    // The Lion's voice
+    room.on(lk.RoomEvent.TrackSubscribed, (track) => {
+        if (track.kind !== lk.Track.Kind.Audio) return
+        const el = track.attach()
+        el.setAttribute('data-compass-voice', '')
+        document.body.appendChild(el)
+        audio.add(el)
+    })
+    room.on(lk.RoomEvent.TrackUnsubscribed, (track) => {
+        track.detach().forEach((el) => {
+            el.remove()
+            audio.delete(el)
+        })
+    })
+    room.on(lk.RoomEvent.Disconnected, finish)
+
+    // listening / thinking / speaking
+    room.on(lk.RoomEvent.ParticipantAttributesChanged, (changed, participant) => {
+        if (changed['lk.agent.state'] !== undefined) {
+            onStatus?.(participant.attributes['lk.agent.state'])
+        }
+    })
+
+    // Live captions for both sides
+    room.registerTextStreamHandler('lk.transcription', async (reader) => {
+        const attrs = reader.info.attributes || {}
+        const id = attrs['lk.segment_id'] || reader.info.id
+        const trackId = attrs['lk.transcribed_track_id']
+        const role =
+            trackId && room.localParticipant.trackPublications.has(trackId) ? 'user' : 'assistant'
+        let text = ''
+        for await (const chunk of reader) {
+            text += chunk
+            onTranscript?.({ id, role, text })
+        }
+    })
+
+    try {
+        await room.connect(token.url, token.token)
+        await room.localParticipant.setMicrophoneEnabled(true)
+    } catch (err) {
+        room.disconnect()
+        finish()
+        throw err
+    }
+    onStatus?.('listening')
+
+    return {
+        setMuted: (muted) => room.localParticipant.setMicrophoneEnabled(!muted),
+        end: () => {
+            room.disconnect()
+            finish()
+        },
+    }
 }
 
 // ── Opening the full chat ───────────────────────────────────
